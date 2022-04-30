@@ -4,7 +4,7 @@ use crate::{Connection, Result};
 
 /// A bird client instance. You need to create a [Connection] from this
 /// client, using [Client::connect], to make requests.
-/// 
+///
 /// You can create multiple [Connection]s from the same client, each
 /// with their own independent workflows.
 pub struct Client {

@@ -47,9 +47,6 @@ async fn test_raw_protocol() {
         .expect("failed to start server");
     let client = Client::for_unix_socket(&server.unix_socket);
     let mut connection = client.connect().await.expect("failed to connect client");
-    // for message in &connection.send_request("show interfaces").await.expect("blah") {
-    //     log::debug!("received message: {:?}", message);
-    // }
     let response = connection
         .send_request("show interfaces")
         .await
@@ -74,6 +71,23 @@ async fn test_raw_protocol_with_delays() {
         .await
         .expect("failed to send request");
     validate_show_interfaces_response(&response);
+
+    server.wait_until(1, 3).await;
+}
+
+#[tokio::test]
+async fn test_show_interfaces() {
+    let _ = env_logger::try_init();
+    let server = MockServer::start_server(&get_test_text(), 0)
+        .await
+        .expect("failed to start server");
+    let client = Client::for_unix_socket(&server.unix_socket);
+    let mut connection = client.connect().await.expect("failed to connect client");
+    let response = connection
+        .show_interfaces()
+        .await
+        .expect("failed to parse response");
+    assert_eq!(response.len(), 3);
 
     server.wait_until(1, 3).await;
 }

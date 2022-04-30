@@ -5,7 +5,9 @@
 use std::{collections::VecDeque, io::ErrorKind, path::Path};
 use tokio::net::UnixStream;
 
-use crate::{Error, Message, Result};
+use crate::{
+    Error, Interface, InterfaceAddress, InterfaceProperties, Message, Result, ShowInterfacesMessage,
+};
 
 /// An active connection, on which requests can be executed, and responses
 /// received.
@@ -86,6 +88,86 @@ impl Connection {
                 return Ok(result);
             } else {
                 result.push(message);
+            }
+        }
+    }
+
+    /// Sends a `show interfaces` request and returns the parsed response as a
+    /// list of [ShowInterfacesMessage] entries, one each for an interface.
+    pub async fn show_interfaces(&mut self) -> Result<Vec<ShowInterfacesMessage>> {
+        let messages = self.send_request("show interfaces").await?;
+        let mut result = vec![];
+
+        // we expect messages to show up as a series of triplets: 1001, 1004 and 1003
+        let mut idx = 0;
+        loop {
+            // each iteration here means fully going through all of 1001, 1004 and 1003
+
+            // if we're already at end, return
+            if idx >= messages.len() {
+                return Ok(result);
+            }
+
+            // start processing
+            let first_msg = &messages[idx];
+            idx += 1;
+
+            // process only if we find the first entry to be a 1001
+            if let Some(msg_1001) = Interface::from_enum(first_msg) {
+                // get the position of the next 1001
+                let next_1001_idx = (&messages[idx..])
+                    .iter()
+                    .position(|x| matches!(x, Message::InterfaceList(_)))
+                    .unwrap_or(messages.len() - idx)
+                    + idx;
+                let delta = next_1001_idx - idx;
+                if delta == 0 || delta > 2 {
+                    log::error!(
+                        "conn: parse failed: a 1001 entry without (or more than one) 1003/1004",
+                    );
+                    return Err(Error::ParseError(messages));
+                }
+                let mut msg_1004: Option<InterfaceProperties> = None;
+                let mut msg_1003: Option<Vec<InterfaceAddress>> = None;
+                while idx < next_1001_idx {
+                    let cur_msg = &messages[idx];
+                    idx += 1;
+                    match cur_msg {
+                        Message::InterfaceFlags(_) => {
+                            if let Some(props) = InterfaceProperties::from_enum(cur_msg) {
+                                msg_1004 = Some(props);
+                            } else {
+                                return Err(Error::ParseError(messages));
+                            }
+                        }
+                        Message::InterfaceAddress(_) => {
+                            if let Some(addrs) = InterfaceAddress::from_enum(cur_msg) {
+                                msg_1003 = Some(addrs);
+                            } else {
+                                return Err(Error::ParseError(messages));
+                            }
+                        }
+                        _ => {
+                            log::error!(
+                                "conn: parse failed: found invalid code {}",
+                                messages[idx].code()
+                            );
+                            return Err(Error::ParseError(messages));
+                        }
+                    }
+                }
+                if let Some(msg_1004) = msg_1004 {
+                    result.push(ShowInterfacesMessage {
+                        interface: msg_1001,
+                        properties: msg_1004,
+                        addresses: msg_1003.unwrap_or_else(Vec::new),
+                    });
+                } else {
+                    log::error!("conn: parse failed: found a 1001 without a 1004");
+                    return Err(Error::ParseError(messages));
+                }
+            } else {
+                return Err(Error::ParseError(messages));
             }
         }
     }

@@ -20,7 +20,29 @@
 //! }
 //!
 //! // or we can use structured exchange
-//! todo!("to be done");
+//! async fn show_interfaces(client: &Client) -> Result<()> {
+//!     let mut connection = client.connect().await?;
+//!
+//!     // let's make a semantic call now
+//!     match connection.show_interfaces().await {
+//!         Ok(entries) => {
+//!             for e in &entries {
+//!                 println!("received entry: {:?}", e);
+//!             }
+//!         }
+//!         Err(Error::ParseError(messages)) => {
+//!             // we can still go through the raw response
+//!             // even though semantic parsing failed
+//!             for msg in &messages {
+//!                 println!("raw message: {:?}", msg);
+//!             }
+//!         }
+//!         Err(e) => {
+//!             return Err(e);
+//!         }
+//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Compatibility
@@ -37,3 +59,6 @@ pub use error::*;
 
 mod message;
 pub use message::*;
+
+mod models;
+pub use models::*;

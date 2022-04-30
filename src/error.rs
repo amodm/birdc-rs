@@ -16,6 +16,10 @@ pub enum Error {
     /// If we received a token which was not what we were
     /// supposed to get
     InvalidToken(String),
+    /// We were unable to semantically parse the message,
+    /// and the contained value represents the list of
+    /// messages we'd received
+    ParseError(Vec<Message>),
 }
 
 impl Error {
