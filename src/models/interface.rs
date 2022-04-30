@@ -88,20 +88,19 @@ impl InterfaceProperties {
     pub fn from_enum(message: &Message) -> Option<Self> {
         if let Message::InterfaceFlags(content) = message {
             let mut it = content.split_ascii_whitespace();
-            let iftype;
             let mut flags = 0_u32;
             let mut mtu = 0;
 
-            if let Some(s) = it.next() {
-                iftype = match s {
+            let iftype = if let Some(s) = it.next() {
+                match s {
                     "PtP" => InterfaceType::PointToPoint,
                     "MultiAccess" => InterfaceType::MultiAccess,
                     _ => InterfaceType::Unknown(s.to_owned()),
-                };
+                }
             } else {
                 log::error!("ifc: did not find any iftype in {}", content);
                 return None;
-            }
+            };
             for token in content.split_ascii_whitespace() {
                 if let Some(_mtu) = token.strip_prefix("MTU=") {
                     if let Ok(m) = _mtu.parse::<u32>() {

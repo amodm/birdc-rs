@@ -160,7 +160,7 @@ impl Connection {
                     result.push(ShowInterfacesMessage {
                         interface: msg_1001,
                         properties: msg_1004,
-                        addresses: msg_1003.unwrap_or_else(Vec::new),
+                        addresses: msg_1003.unwrap_or_default(),
                     });
                 } else {
                     log::error!("conn: parse failed: found a 1001 without a 1004");
