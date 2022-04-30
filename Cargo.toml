@@ -1,0 +1,23 @@
+[package]
+name = "birdc"
+description = "Library to talk to the bird BGP server"
+version = "0.1.0"
+authors = ["Amod Malviya @amodm"]
+documentation = "https://docs.rs/birdc"
+homepage = "https://github.com/amodm/birdc-rs"
+repository = "https://github.com/amodm/birdc-rs"
+readme = "README.md"
+keywords = ["bird", "birdc", "bgp"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+log = "0.4"
+tokio = { version = "1.17", features = ["net"] }
+tokio-stream = "0.1"
+
+[dev-dependencies]
+env_logger = "0.9"
+rand = "0.8"
+tokio = { version = "1.17", features = ["macros", "net", "rt", "sync"] }
