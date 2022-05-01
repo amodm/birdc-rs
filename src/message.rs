@@ -57,6 +57,7 @@ pub enum Message {
     BabelNeighbors(String),
     BabelEntries(String),
     // 2xxx series - table headers
+    ProtocolListHeader(String),
     InterfaceSummaryHeader(String),
     // we bundle up all 2xxx series headers here
     TableHeader(u32, String),
@@ -140,6 +141,7 @@ impl Message {
             1023 => Self::BabelInterfaces(msg),
             1024 => Self::BabelNeighbors(msg),
             1025 => Self::BabelEntries(msg),
+            2002 => Self::ProtocolListHeader(msg),
             2005 => Self::InterfaceSummaryHeader(msg),
             2000..=2999 => Self::TableHeader(code, msg),
             8000 => Self::ReplyTooLong(msg),
@@ -213,6 +215,7 @@ impl Message {
             Message::BabelInterfaces(_) => 1023,
             Message::BabelNeighbors(_) => 1024,
             Message::BabelEntries(_) => 1025,
+            Message::ProtocolListHeader(_) => 2002,
             Message::InterfaceSummaryHeader(_) => 2005,
             Message::TableHeader(c, _) => *c,
             Message::ReplyTooLong(_) => 8000,
