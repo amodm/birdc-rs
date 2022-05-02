@@ -92,6 +92,38 @@ async fn test_show_interfaces() {
     server.wait_until(1, 3).await;
 }
 
+#[tokio::test]
+async fn test_show_interfaces_summary() {
+    let _ = env_logger::try_init();
+    let server = MockServer::start_server(&get_interfaces_summary(), 0)
+        .await
+        .expect("failed to start server");
+    let client = Client::for_unix_socket(&server.unix_socket);
+    let mut connection = client.connect().await.expect("failed to connect client");
+    let response = connection
+        .show_interfaces_summary()
+        .await
+        .expect("failed to parse response");
+    assert_eq!(response.len(), 3);
+
+    assert_eq!(response[0].name, "lo");
+    assert_eq!(response[0].state, "up");
+    assert!(matches!(&response[0].ipv4_address, Some(x) if x == "127.0.0.1/8"));
+    assert!(matches!(&response[0].ipv6_address, Some(x) if x == "::1/128"));
+
+    assert_eq!(response[1].name, "eth0");
+    assert_eq!(response[1].state, "up");
+    assert!(matches!(&response[1].ipv4_address, Some(x) if x == "172.30.0.12/16"));
+    assert!(matches!(&response[1].ipv6_address, Some(x) if x == "fe80::4495:80ff:fe71:a791/64"));
+
+    assert_eq!(response[2].name, "eth1");
+    assert_eq!(response[2].state, "up");
+    assert!(matches!(&response[2].ipv4_address, Some(x) if x == "169.254.199.2/30"));
+    assert!(matches!(&response[2].ipv6_address, Some(x) if x == "fe80::a06f:7ff:fea7:c662/64"));
+
+    server.wait_until(1, 3).await;
+}
+
 /// Validates response of `show interfaces` command
 fn validate_show_interfaces_response(response: &[Message]) {
     // for device lo
@@ -165,6 +197,17 @@ fn get_test_text() -> String {
         1003-\t169.254.199.2/30 (Preferred, opposite 169.254.199.1, scope univ)
          \tfe80::a06f:7ff:fea7:c662/64 (Preferred, scope link)
          \tfe80:169:254:199::2/126 (scope link)
+        0000 
+        ",
+    )
+}
+
+fn get_interfaces_summary() -> String {
+    heredoc(
+        "2005-Interface  State  IPv4 address       IPv6 address
+        1005-lo         up     127.0.0.1/8        ::1/128
+         eth0       up     172.30.0.12/16     fe80::4495:80ff:fe71:a791/64
+         eth1       up     169.254.199.2/30   fe80::a06f:7ff:fea7:c662/64
         0000 
         ",
     )

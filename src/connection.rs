@@ -6,7 +6,8 @@ use std::{collections::VecDeque, io::ErrorKind, path::Path};
 use tokio::net::UnixStream;
 
 use crate::{
-    Error, Interface, InterfaceAddress, InterfaceProperties, Message, Result, ShowInterfacesMessage,
+    Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Result,
+    ShowInterfacesMessage,
 };
 
 /// An active connection, on which requests can be executed, and responses
@@ -90,6 +91,27 @@ impl Connection {
                 result.push(message);
             }
         }
+    }
+
+    /// Sends a `show interfaces summary` request and returns the parsed response as a
+    /// list of [InterfaceSummary] entries, one each for an interface.
+    pub async fn show_interfaces_summary(&mut self) -> Result<Vec<InterfaceSummary>> {
+        let messages = self.send_request("show interfaces summary").await?;
+
+        // we ignore the 2005 message, and focus only on 1005
+        for message in &messages {
+            // if we get a 1005, we process it and return it
+            if let Message::InterfaceSummary(_) = message {
+                return if let Some(ifcs) = InterfaceSummary::from_enum(message) {
+                    Ok(ifcs)
+                } else {
+                    Err(Error::ParseError(messages))
+                };
+            }
+        }
+
+        // if we didn't encounter any 1005, we return a ParseError
+        Err(Error::ParseError(messages))
     }
 
     /// Sends a `show interfaces` request and returns the parsed response as a
