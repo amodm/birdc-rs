@@ -1,7 +1,7 @@
 # birdc
 
 [![Current Crates.io Version](https://img.shields.io/crates/v/birdc.svg)](https://crates.io/crates/birdc)
-![Build](https://github.com/amodm/birdc-rs/workflows/Main/badge.svg?branch=main)
+[![Build](https://github.com/amodm/birdc-rs/actions/workflows/main.yaml/badge.svg?branch=main)](https://github.com/amodm/birdc-rs/actions/workflows/main.yaml)
 [![License](https://img.shields.io/crates/l/birdc.svg)](LICENSE-MIT)
 
 Rust library to talk to the [Bird BGP server](https://bird.network.cz/) for administrative
