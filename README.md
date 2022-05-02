@@ -10,6 +10,7 @@ and instrumentation purposes.
 ## Documentation
 
 - [API Reference](https://docs.rs/birdc)
+- [Changelog](CHANGELOG.md)
 
 ## Examples
 
