@@ -124,6 +124,101 @@ async fn test_show_interfaces_summary() {
     server.wait_until(1, 3).await;
 }
 
+#[tokio::test]
+async fn test_show_protocols() {
+    let _ = env_logger::try_init();
+    let server = MockServer::start_server(&get_protocols(), 0)
+        .await
+        .expect("failed to start server");
+    let client = Client::for_unix_socket(&server.unix_socket);
+    let mut connection = client.connect().await.expect("failed to connect client");
+    let protocol = connection
+        .show_protocols(None)
+        .await
+        .expect("failed to parse response");
+
+    assert_eq!(protocol.len(), 7);
+
+    assert_eq!(protocol[0].name, "device1");
+    assert_eq!(protocol[0].proto, "Device");
+    assert!(protocol[0].table.is_none());
+    assert_eq!(protocol[0].state, "up");
+    assert_eq!(protocol[0].since, "2022-04-14");
+    assert!(protocol[0].info.is_none());
+
+    assert_eq!(protocol[1].name, "direct_eth0");
+    assert_eq!(protocol[1].proto, "Direct");
+    assert!(protocol[1].table.is_none());
+    assert_eq!(protocol[1].state, "up");
+    assert_eq!(protocol[1].since, "2022-04-14");
+    assert!(protocol[1].info.is_none());
+
+    assert_eq!(protocol[2].name, "kernel_v4");
+    assert_eq!(protocol[2].proto, "Kernel");
+    assert_eq!(protocol[2].table.as_ref().unwrap(), "master4");
+    assert_eq!(protocol[2].state, "up");
+    assert_eq!(protocol[2].since, "2022-04-14");
+    assert!(protocol[2].info.is_none());
+
+    assert_eq!(protocol[3].name, "kernel_v6");
+    assert_eq!(protocol[3].proto, "Kernel");
+    assert_eq!(protocol[3].table.as_ref().unwrap(), "master6");
+    assert_eq!(protocol[3].state, "up");
+    assert_eq!(protocol[3].since, "2022-04-14");
+    assert!(protocol[3].info.is_none());
+
+    assert_eq!(protocol[4].name, "bfd1");
+    assert_eq!(protocol[4].proto, "BFD");
+    assert!(protocol[4].table.is_none());
+    assert_eq!(protocol[4].state, "up");
+    assert_eq!(protocol[4].since, "2022-04-14");
+    assert!(protocol[4].info.is_none());
+
+    assert_eq!(protocol[5].name, "bgp_local4");
+    assert_eq!(protocol[5].proto, "BGP");
+    assert!(protocol[5].table.is_none());
+    assert_eq!(protocol[5].state, "up");
+    assert_eq!(protocol[5].since, "2022-04-16");
+    assert_eq!(protocol[5].info.as_ref().unwrap(), "Established");
+
+    assert_eq!(protocol[6].name, "bgp_local6");
+    assert_eq!(protocol[6].proto, "BGP");
+    assert!(protocol[6].table.is_none());
+    assert_eq!(protocol[6].state, "up");
+    assert_eq!(protocol[6].since, "2022-04-16");
+    assert_eq!(protocol[6].info.as_ref().unwrap(), "Established");
+}
+
+#[tokio::test]
+async fn test_show_protocols_pattern() {
+    let _ = env_logger::try_init();
+    let server = MockServer::start_server(&get_protocols_only_kernel(), 0)
+        .await
+        .expect("failed to start server");
+    let client = Client::for_unix_socket(&server.unix_socket);
+    let mut connection = client.connect().await.expect("failed to connect client");
+    let protocol = connection
+        .show_protocols(Some("kernel*"))
+        .await
+        .expect("failed to parse response");
+
+    assert_eq!(protocol.len(), 2);
+
+    assert_eq!(protocol[0].name, "kernel_v4");
+    assert_eq!(protocol[0].proto, "Kernel");
+    assert_eq!(protocol[0].table.as_ref().unwrap(), "master4");
+    assert_eq!(protocol[0].state, "up");
+    assert_eq!(protocol[0].since, "2022-04-14");
+    assert!(protocol[0].info.is_none());
+
+    assert_eq!(protocol[1].name, "kernel_v6");
+    assert_eq!(protocol[1].proto, "Kernel");
+    assert_eq!(protocol[1].table.as_ref().unwrap(), "master6");
+    assert_eq!(protocol[1].state, "up");
+    assert_eq!(protocol[1].since, "2022-04-14");
+    assert!(protocol[1].info.is_none());
+}
+
 /// Validates response of `show interfaces` command
 fn validate_show_interfaces_response(response: &[Message]) {
     // for device lo
@@ -208,6 +303,31 @@ fn get_interfaces_summary() -> String {
         1005-lo         up     127.0.0.1/8        ::1/128
          eth0       up     172.30.0.12/16     fe80::4495:80ff:fe71:a791/64
          eth1       up     169.254.199.2/30   fe80::a06f:7ff:fea7:c662/64
+        0000 
+        ",
+    )
+}
+
+fn get_protocols() -> String {
+    heredoc(
+        "2002-Name       Proto      Table      State  Since         Info
+        1002-device1    Device     ---        up     2022-04-14    
+         direct_eth0 Direct     ---        up     2022-04-14    
+         kernel_v4  Kernel     master4    up     2022-04-14    
+         kernel_v6  Kernel     master6    up     2022-04-14    
+         bfd1       BFD        ---        up     2022-04-14    
+         bgp_local4 BGP        ---        up     2022-04-16    Established   
+         bgp_local6 BGP        ---        up     2022-04-16    Established   
+        0000 
+        ",
+    )
+}
+
+fn get_protocols_only_kernel() -> String {
+    heredoc(
+        "2002-Name       Proto      Table      State  Since         Info
+        1002-kernel_v4  Kernel     master4    up     2022-04-14    
+         kernel_v6  Kernel     master6    up     2022-04-14    
         0000 
         ",
     )

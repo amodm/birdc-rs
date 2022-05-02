@@ -6,8 +6,8 @@ use std::{collections::VecDeque, io::ErrorKind, path::Path};
 use tokio::net::UnixStream;
 
 use crate::{
-    Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Result,
-    ShowInterfacesMessage,
+    Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Protocol,
+    Result, ShowInterfacesMessage,
 };
 
 /// An active connection, on which requests can be executed, and responses
@@ -192,6 +192,35 @@ impl Connection {
                 return Err(Error::ParseError(messages));
             }
         }
+    }
+
+    /// Sends a `show protocols [<pattern>]` request and returns the parsed response as a
+    /// list of [InterfaceSummary] entries, one each for an interface.
+    ///
+    /// If `pattern` is specified, results of only those protocols is returned, which
+    /// match the pattern.
+    pub async fn show_protocols(&mut self, pattern: Option<&str>) -> Result<Vec<Protocol>> {
+        let cmd = if let Some(pattern) = pattern {
+            format!("show protocols \"{}\"", pattern)
+        } else {
+            "show protocols".into()
+        };
+        let messages = self.send_request(&cmd).await?;
+
+        // we ignore the 2002 message, and focus only on 1005
+        for message in &messages {
+            // if we get a 1002, we process it and return it
+            if let Message::ProtocolList(_) = message {
+                return if let Some(protocols) = Protocol::from_enum(message) {
+                    Ok(protocols)
+                } else {
+                    Err(Error::ParseError(messages))
+                };
+            }
+        }
+
+        // if we didn't encounter any 1002, we return a ParseError
+        Err(Error::ParseError(messages))
     }
 
     /// Reads a full [Message] from the server, and returns it
