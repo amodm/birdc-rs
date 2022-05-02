@@ -147,7 +147,7 @@ impl MockServer {
 /// Helper method that takes in `s` as a multiline string, and trims off the indent
 /// that might have come due to the text editor.
 pub fn heredoc(s: &str) -> String {
-    let indent = if let Some(line2) = s.split('\n').nth(2) {
+    let indent = if let Some(line2) = s.split('\n').nth(1) {
         line2.find(char::is_alphanumeric).unwrap_or(0)
     } else {
         0
