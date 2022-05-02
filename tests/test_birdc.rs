@@ -219,6 +219,138 @@ async fn test_show_protocols_pattern() {
     assert!(protocol[1].info.is_none());
 }
 
+#[tokio::test]
+async fn test_show_protocols_all() {
+    let _ = env_logger::try_init();
+    let server = MockServer::start_server(&get_protocols_all(), 0)
+        .await
+        .expect("failed to start server");
+    let client = Client::for_unix_socket(&server.unix_socket);
+    let mut connection = client.connect().await.expect("failed to connect client");
+    let protocols = connection
+        .show_protocols_details(None)
+        .await
+        .expect("failed to parse response");
+
+    assert_eq!(protocols.len(), 7);
+
+    assert_eq!(protocols[0].protocol.name, "device1");
+    assert_eq!(protocols[0].protocol.proto, "Device");
+    assert_eq!(protocols[0].protocol.state, "up");
+    assert_eq!(protocols[0].protocol.since, "2022-04-14");
+    assert!(protocols[0].detail.is_none());
+
+    assert_eq!(protocols[1].protocol.name, "direct_eth0");
+    assert_eq!(protocols[1].protocol.proto, "Direct");
+    assert_eq!(protocols[1].protocol.state, "up");
+    assert_eq!(protocols[1].protocol.since, "2022-04-14");
+    let details = protocols[1]
+        .detail
+        .as_ref()
+        .expect("detail should've been present");
+    assert!(details.proto_info.is_none());
+    assert_eq!(details.channels[0].name, "ipv4");
+    assert_eq!(details.channels[0].state, "UP");
+    assert_eq!(details.channels[0].table, "master4");
+    assert_eq!(details.channels[1].name, "ipv6");
+    assert_eq!(details.channels[1].state, "UP");
+    assert_eq!(details.channels[1].table, "master6");
+
+    assert_eq!(protocols[2].protocol.name, "kernel_v4");
+    assert_eq!(protocols[2].protocol.proto, "Kernel");
+    assert_eq!(protocols[2].protocol.state, "up");
+    assert_eq!(protocols[2].protocol.since, "2022-04-14");
+    let details = protocols[2]
+        .detail
+        .as_ref()
+        .expect("detail should've been present");
+    assert!(details.proto_info.is_none());
+    assert_eq!(details.channels[0].name, "ipv4");
+    assert_eq!(details.channels[0].state, "UP");
+    assert_eq!(details.channels[0].table, "master4");
+
+    assert_eq!(protocols[3].protocol.name, "kernel_v6");
+    assert_eq!(protocols[3].protocol.proto, "Kernel");
+    assert_eq!(protocols[3].protocol.state, "up");
+    assert_eq!(protocols[3].protocol.since, "2022-04-14");
+    let details = protocols[3]
+        .detail
+        .as_ref()
+        .expect("detail should've been present");
+    assert!(details.proto_info.is_none());
+    assert_eq!(details.channels[0].name, "ipv6");
+    assert_eq!(details.channels[0].state, "UP");
+    assert_eq!(details.channels[0].table, "master6");
+
+    assert_eq!(protocols[4].protocol.name, "bfd1");
+    assert_eq!(protocols[4].protocol.proto, "BFD");
+    assert_eq!(protocols[4].protocol.state, "up");
+    assert_eq!(protocols[4].protocol.since, "2022-04-14");
+    assert!(protocols[4].detail.is_none());
+
+    assert_eq!(protocols[5].protocol.name, "bgp_r1_v4");
+    assert_eq!(protocols[5].protocol.proto, "BGP");
+    assert_eq!(protocols[5].protocol.state, "up");
+    assert_eq!(protocols[5].protocol.since, "2022-04-14");
+    let details = protocols[5]
+        .detail
+        .as_ref()
+        .expect("detail should've been present");
+    assert!(matches!(&details.description, Some(x) if x == "IPv4 BGP with internal router"));
+    let ProtoSpecificInfo::Bgp(bgp_info) = details
+        .proto_info
+        .as_ref()
+        .expect("proto info should've been present");
+    assert_eq!(bgp_info.local_as, 64560);
+    assert_eq!(bgp_info.neighbor_as, 64561);
+    let bgp_session = bgp_info
+        .session
+        .as_ref()
+        .expect("expected bgp session to be present");
+    assert_eq!(bgp_session.neighbor_id, "172.29.0.1");
+    assert_eq!(bgp_session.hold_time, 240);
+    assert_eq!(bgp_session.keepalive_time, 80);
+    assert_eq!(details.channels[0].name, "ipv4");
+    assert_eq!(details.channels[0].state, "UP");
+    let route_stats = details.channels[0]
+        .route_stats
+        .as_ref()
+        .expect("route stats should've been present");
+    assert_eq!(route_stats.imported, 1);
+    assert_eq!(route_stats.exported, 0);
+
+    assert_eq!(protocols[6].protocol.name, "bgp_r1_v6");
+    assert_eq!(protocols[6].protocol.proto, "BGP");
+    assert_eq!(protocols[6].protocol.state, "up");
+    assert_eq!(protocols[6].protocol.since, "2022-04-14");
+    let details = protocols[6]
+        .detail
+        .as_ref()
+        .expect("detail should've been present");
+    assert!(matches!(&details.description, Some(x) if x == "IPv6 BGP with internal router"));
+    let ProtoSpecificInfo::Bgp(bgp_info) = details
+        .proto_info
+        .as_ref()
+        .expect("proto info should've been present");
+    assert_eq!(bgp_info.local_as, 64560);
+    assert_eq!(bgp_info.neighbor_as, 64561);
+    let bgp_session = bgp_info
+        .session
+        .as_ref()
+        .expect("expected bgp session to be present");
+    assert_eq!(bgp_session.neighbor_id, "172.29.0.1");
+    assert_eq!(bgp_session.hold_time, 240);
+    assert_eq!(bgp_session.keepalive_time, 80);
+    assert_eq!(details.channels[0].name, "ipv6");
+    assert_eq!(details.channels[0].state, "UP");
+    let route_stats = details.channels[0]
+        .route_stats
+        .as_ref()
+        .expect("route stats should've been present");
+    assert_eq!(route_stats.imported, 1);
+    assert_eq!(route_stats.exported, 0);
+}
+
 /// Validates response of `show interfaces` command
 fn validate_show_interfaces_response(response: &[Message]) {
     // for device lo
@@ -328,6 +460,154 @@ fn get_protocols_only_kernel() -> String {
         "2002-Name       Proto      Table      State  Since         Info
         1002-kernel_v4  Kernel     master4    up     2022-04-14    
          kernel_v6  Kernel     master6    up     2022-04-14    
+        0000 
+        ",
+    )
+}
+
+fn get_protocols_all() -> String {
+    heredoc(
+        "2002-Name       Proto      Table      State  Since         Info
+        1002-device1    Device     ---        up     2022-04-14    
+        1006-
+        1002-direct_eth0 Direct     ---        up     2022-04-14    
+        1006-  Channel ipv4
+             State:          UP
+             Table:          master4
+             Preference:     240
+             Input filter:   ACCEPT
+             Output filter:  REJECT
+             Routes:         7 imported, 0 exported, 7 preferred
+             Route change stats:     received   rejected   filtered    ignored   accepted
+               Import updates:              7          0          0          0          7
+               Import withdraws:            0          0        ---          0          0
+               Export updates:              0          0          0        ---          0
+               Export withdraws:            0        ---        ---        ---          0
+           Channel ipv6
+             State:          UP
+             Table:          master6
+             Preference:     240
+             Input filter:   ACCEPT
+             Output filter:  REJECT
+             Routes:         0 imported, 0 exported, 0 preferred
+             Route change stats:     received   rejected   filtered    ignored   accepted
+               Import updates:              3          0          0          1          2
+               Import withdraws:            2          0        ---          0          2
+               Export updates:              0          0          0        ---          0
+               Export withdraws:            0        ---        ---        ---          0
+         
+        1002-kernel_v4  Kernel     master4    up     2022-04-14    
+        1006-  Channel ipv4
+             State:          UP
+             Table:          master4
+             Preference:     10
+             Input filter:   REJECT
+             Output filter:  save_to_kernel
+             Routes:         0 imported, 2 exported, 0 preferred
+             Route change stats:     received   rejected   filtered    ignored   accepted
+               Import updates:              0          0          0          0          0
+               Import withdraws:            0          0        ---          0          0
+               Export updates:             20          0         14        ---          6
+               Export withdraws:            4        ---        ---        ---          4
+         
+        1002-kernel_v6  Kernel     master6    up     2022-04-14    
+        1006-  Channel ipv6
+             State:          UP
+             Table:          master6
+             Preference:     10
+             Input filter:   REJECT
+             Output filter:  save_to_kernel
+             Routes:         0 imported, 2 exported, 0 preferred
+             Route change stats:     received   rejected   filtered    ignored   accepted
+               Import updates:              0          0          0          0          0
+               Import withdraws:            0          0        ---          0          0
+               Export updates:             12          0          3        ---          9
+               Export withdraws:            9        ---        ---        ---          7
+         
+        1002-bfd1       BFD        ---        up     2022-04-14    
+        1006-
+        1002-bgp_r1_v4 BGP        ---        up     2022-04-14    Established   
+        1006-  Description:    IPv4 BGP with internal router
+           BGP state:          Established
+             Neighbor address: 172.29.0.1
+             Neighbor AS:      64561
+             Local AS:         64560
+             Neighbor ID:      172.29.0.1
+             Local capabilities
+               Multiprotocol
+                 AF announced: ipv4
+               Route refresh
+               Graceful restart
+               4-octet AS numbers
+               Enhanced refresh
+               Long-lived graceful restart
+             Neighbor capabilities
+               Multiprotocol
+                 AF announced: ipv4
+               Route refresh
+               Graceful restart
+               4-octet AS numbers
+               Enhanced refresh
+               Long-lived graceful restart
+             Session:          external AS4
+             Source address:   172.29.0.12
+             Hold timer:       207.832/240
+             Keepalive timer:  48.076/80
+           Channel ipv4
+             State:          UP
+             Table:          master4
+             Preference:     100
+             Input filter:   ACCEPT
+             Output filter:  REJECT
+             Routes:         1 imported, 0 exported, 1 preferred
+             Route change stats:     received   rejected   filtered    ignored   accepted
+               Import updates:              3          0          0          0          3
+               Import withdraws:            2          0        ---          0          2
+               Export updates:             13          3         10        ---          0
+               Export withdraws:            4        ---        ---        ---          0
+             BGP Next hop:   172.29.0.1
+         
+        1002-bgp_r1_v6 BGP        ---        up     2022-04-14    Established   
+        1006-  Description:    IPv6 BGP with internal router
+           BGP state:          Established
+             Neighbor address: fe80:172:29::1%eth0
+             Neighbor AS:      64561
+             Local AS:         64560
+             Neighbor ID:      172.29.0.1
+             Local capabilities
+               Multiprotocol
+                 AF announced: ipv6
+               Route refresh
+               Graceful restart
+               4-octet AS numbers
+               Enhanced refresh
+               Long-lived graceful restart
+             Neighbor capabilities
+               Multiprotocol
+                 AF announced: ipv6
+               Route refresh
+               Graceful restart
+               4-octet AS numbers
+               Enhanced refresh
+               Long-lived graceful restart
+             Session:          external AS4
+             Source address:   fe80:172:29::12
+             Hold timer:       138.941/240
+             Keepalive timer:  71.918/80
+           Channel ipv6
+             State:          UP
+             Table:          master6
+             Preference:     100
+             Input filter:   ACCEPT
+             Output filter:  REJECT
+             Routes:         1 imported, 0 exported, 1 preferred
+             Route change stats:     received   rejected   filtered    ignored   accepted
+               Import updates:              7          1          2          3          1
+               Import withdraws:            2          0        ---          0          2
+               Export updates:             12          1          1        ---         10
+               Export withdraws:            4        ---        ---        ---          4
+             BGP Next hop:   :: fe80:172:29::1%eth0
+         
         0000 
         ",
     )

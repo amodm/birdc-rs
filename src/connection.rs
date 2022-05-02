@@ -7,7 +7,7 @@ use tokio::net::UnixStream;
 
 use crate::{
     Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Protocol,
-    Result, ShowInterfacesMessage,
+    ProtocolDetail, Result, ShowInterfacesMessage, ShowProtocolDetailsMessage,
 };
 
 /// An active connection, on which requests can be executed, and responses
@@ -195,7 +195,7 @@ impl Connection {
     }
 
     /// Sends a `show protocols [<pattern>]` request and returns the parsed response as a
-    /// list of [InterfaceSummary] entries, one each for an interface.
+    /// list of [InterfaceSummary] entries, one for each protocol.
     ///
     /// If `pattern` is specified, results of only those protocols is returned, which
     /// match the pattern.
@@ -221,6 +221,74 @@ impl Connection {
 
         // if we didn't encounter any 1002, we return a ParseError
         Err(Error::ParseError(messages))
+    }
+
+    /// Sends a `show protocols all [<pattern>]` request and returns the parsed response as a
+    /// list of [ShowProtocolDetailsMessage] entries, one for each protocol instance.
+    ///
+    /// If `pattern` is specified, results of only those protocols is returned, which
+    /// match the pattern.
+    pub async fn show_protocols_details(
+        &mut self,
+        pattern: Option<&str>,
+    ) -> Result<Vec<ShowProtocolDetailsMessage>> {
+        let cmd = if let Some(pattern) = pattern {
+            format!("show protocols all \"{}\"", pattern)
+        } else {
+            "show protocols all".into()
+        };
+        let mut result = vec![];
+        let messages = self.send_request(&cmd).await?;
+
+        // we expect messages to show up as a series of doublets: 1002 and 1006
+        if let Some(mut idx) = messages
+            .iter()
+            .position(|x| matches!(x, Message::ProtocolList(_)))
+        {
+            while idx < messages.len() {
+                // each iteration here means fully going through the pair of 1002 and 1006
+
+                if let Some(protocol) = Protocol::from_enum(&messages[idx]) {
+                    // move index to the next message
+                    idx += 1;
+                    // if we have a valid 1002 ...
+                    if let Some(protocol) = protocol.first() {
+                        // ... check for 1006
+                        if idx == messages.len()
+                            || !matches!(messages[idx], Message::ProtocolDetails(_))
+                        {
+                            // if we're already at the end, or if there's no 1006 after the 1002 we saw
+                            // just a step before, we push the current 1002 without any 1006, and continue
+                            result.push(ShowProtocolDetailsMessage {
+                                protocol: protocol.clone(),
+                                detail: None,
+                            });
+                            continue;
+                        }
+                        // looks like we have a valid 1006, so let's process it
+                        if let Some(detail) = ProtocolDetail::from_enum(&messages[idx]) {
+                            // looks like we got a valid 1006
+                            idx += 1;
+                            result.push(ShowProtocolDetailsMessage {
+                                protocol: protocol.clone(),
+                                detail: Some(detail),
+                            });
+                        } else {
+                            log::error!("conn: failed to parse 1006 message");
+                            return Err(Error::ParseError(messages));
+                        }
+                    }
+                } else {
+                    log::error!("conn: failed to parse 1002 message: {:?}", messages[idx]);
+                    return Err(Error::ParseError(messages));
+                }
+            }
+
+            Ok(result)
+        } else {
+            // No 1002 entries, so empty result
+            Ok(Vec::new())
+        }
     }
 
     /// Reads a full [Message] from the server, and returns it

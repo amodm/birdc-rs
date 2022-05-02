@@ -13,3 +13,11 @@ pub struct ShowInterfacesMessage {
     pub properties: InterfaceProperties,
     pub addresses: Vec<InterfaceAddress>,
 }
+
+/// A composite entry in the `show protocols all` command. Represents
+/// the details of a protocol instance.
+#[derive(Debug)]
+pub struct ShowProtocolDetailsMessage {
+    pub protocol: Protocol,
+    pub detail: Option<ProtocolDetail>,
+}

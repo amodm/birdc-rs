@@ -8,7 +8,7 @@ use crate::Message;
 /// Details related to this are captured in a separate struct [ProtocolDetail],
 /// and routing statistics are maintained inside various [Channel]s through the
 /// [ProtocolDetail::channels] field.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Protocol {
     /// Name of this protocol instance
     pub name: String,
