@@ -306,6 +306,7 @@ mod tests {
     use crate::Message;
 
     #[test]
+    #[ignore]
     fn test_invalid() {
         let _ = env_logger::try_init();
         assert!(
