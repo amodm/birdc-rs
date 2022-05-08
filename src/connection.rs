@@ -7,7 +7,7 @@ use tokio::net::UnixStream;
 
 use crate::{
     Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Protocol,
-    ProtocolDetail, Result, ShowInterfacesMessage, ShowProtocolDetailsMessage,
+    ProtocolDetail, Result, ShowInterfacesMessage, ShowProtocolDetailsMessage, ShowStatusMessage,
 };
 
 /// An active connection, on which requests can be executed, and responses
@@ -288,6 +288,17 @@ impl Connection {
         } else {
             // No 1002 entries, so empty result
             Ok(Vec::new())
+        }
+    }
+
+    /// Sends a `show status` request, and returns a semantically parsed response
+    /// in the form of [ShowStatusMessage]
+    pub async fn show_status(&mut self) -> Result<ShowStatusMessage> {
+        let messages = self.send_request("show status").await?;
+
+        match ShowStatusMessage::from_messages(&messages) {
+            Some(ssm) => Ok(ssm),
+            None => Err(Error::ParseError(messages)),
         }
     }
 

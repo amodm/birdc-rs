@@ -6,6 +6,9 @@ pub use interface::*;
 mod protocol;
 pub use protocol::*;
 
+mod status;
+pub use status::*;
+
 /// A composite entry in the `show interfaces` command
 #[derive(Debug)]
 pub struct ShowInterfacesMessage {

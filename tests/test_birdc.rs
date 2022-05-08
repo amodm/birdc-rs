@@ -351,6 +351,29 @@ async fn test_show_protocols_all() {
     assert_eq!(route_stats.exported, 0);
 }
 
+#[tokio::test]
+async fn test_show_status() {
+    let _ = env_logger::try_init();
+    let server = MockServer::start_server(&get_show_status(), 0)
+        .await
+        .expect("failed to start server");
+    let client = Client::for_unix_socket(&server.unix_socket);
+    let mut connection = client.connect().await.expect("failed to connect client");
+    let status = connection
+        .show_status()
+        .await
+        .expect("failed to parse ShowStatusMessage");
+    assert_eq!(status.version_line, "BIRD 2.0.7");
+    assert_eq!(status.router_id, "172.29.0.12");
+    assert_eq!(status.server_time.to_string(), "2022-05-08 10:14:23.381");
+    assert_eq!(status.last_reboot_on.to_string(), "2022-04-14 22:23:28.096");
+    assert_eq!(
+        status.last_reconfigured_on.to_string(),
+        "2022-04-15 00:00:46.707",
+    );
+    assert_eq!(status.status, "Daemon is up and running");
+}
+
 /// Validates response of `show interfaces` command
 fn validate_show_interfaces_response(response: &[Message]) {
     // for device lo
@@ -436,6 +459,18 @@ fn get_interfaces_summary() -> String {
          eth0       up     172.30.0.12/16     fe80::4495:80ff:fe71:a791/64
          eth1       up     169.254.199.2/30   fe80::a06f:7ff:fea7:c662/64
         0000 
+        ",
+    )
+}
+
+fn get_show_status() -> String {
+    heredoc(
+        "1000-BIRD 2.0.7
+        1011-Router ID is 172.29.0.12
+         Current server time is 2022-05-08 10:14:23.381
+         Last reboot on 2022-04-14 22:23:28.096
+         Last reconfiguration on 2022-04-15 00:00:46.707
+        0013 Daemon is up and running
         ",
     )
 }
