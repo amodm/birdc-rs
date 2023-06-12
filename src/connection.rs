@@ -137,7 +137,7 @@ impl Connection {
             // process only if we find the first entry to be a 1001
             if let Some(msg_1001) = Interface::from_enum(first_msg) {
                 // get the position of the next 1001
-                let next_1001_idx = (&messages[idx..])
+                let next_1001_idx = messages[idx..]
                     .iter()
                     .position(|x| matches!(x, Message::InterfaceList(_)))
                     .unwrap_or(messages.len() - idx)
@@ -619,7 +619,7 @@ fn parse_message(code: u32, buffer: &[u8], start_pos: usize, msg_size: usize) ->
         }
         idx += 1;
 
-        if let Some(nl_pos) = (&buffer[pos..]).iter().position(|it| *it == b'\n') {
+        if let Some(nl_pos) = buffer[pos..].iter().position(|it| *it == b'\n') {
             let src = &buffer[pos..(pos + nl_pos)];
             v.extend_from_slice(src);
             pos += src.len() + 1;
