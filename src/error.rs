@@ -1,4 +1,4 @@
-use std::{num::ParseIntError, str::Utf8Error};
+use std::{fmt, num::ParseIntError, str::Utf8Error};
 
 use super::Message;
 
@@ -20,6 +20,43 @@ pub enum Error {
     /// and the contained value represents the list of
     /// messages we'd received
     ParseError(Vec<Message>),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::IoError(_) => write!(f, "IO operation failed"),
+            Error::ProtocolError(msg) => {
+                write!(f, "received an error message from server")?;
+                match msg {
+                    Message::ReplyTooLong(_) => write!(f, ": reply too long"),
+                    Message::RouteNotFound(_) => write!(f, ": route not found"),
+                    Message::ConfigurationFileError(_) => write!(f, ": configuration file error"),
+                    Message::NoProtocolsMatch(_) => write!(f, ": no protocols match"),
+                    Message::StoppedDueToReconfiguration(_) => {
+                        write!(f, ": stopped due to reconfiguration")
+                    }
+                    Message::ProtocolDown(_) => write!(f, ": protocol is down => connot dump"),
+                    Message::ReloadFailed(_) => write!(f, ": reload failed"),
+                    Message::AccessDenied(_) => write!(f, ": access denied"),
+                    Message::RuntimeError(..) => write!(f, ": evaluation runtime error"),
+                    _ => Ok(()),
+                }
+            }
+            Error::OperationInProgress => write!(f, "another request is already in progress"),
+            Error::InvalidToken(_) => write!(f, "received invalid token"),
+            Error::ParseError(_) => write!(f, "failed to parse server response"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IoError(err) => Some(err),
+            _ => None,
+        }
+    }
 }
 
 impl Error {
