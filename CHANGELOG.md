@@ -5,6 +5,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.0] - 2022-05-02 <a name="0.3.0"></a>
+### Added
+- Make bird errors implement `std::error::Error` and `std::fmt::Display`. See PR #1
+
 ## [0.2.0] - 2022-05-02 <a name="0.2.0"></a>
 ### Added
 - Semantic parsing of `show protocols` and `show protocols all`
@@ -14,5 +18,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Initial release.
 
-[Unreleased]: https://github.com/amodm/birdc-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/amodm/birdc-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/amodm/birdc-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/amodm/birdc-rs/compare/v0.1.0...v0.2.0

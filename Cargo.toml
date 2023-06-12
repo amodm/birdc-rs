@@ -1,7 +1,7 @@
 [package]
 name = "birdc"
 description = "Library to talk to the BIRD BGP server for administrative and instrumentation purposes"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Amod Malviya @amodm"]
 documentation = "https://docs.rs/birdc"
 homepage = "https://github.com/amodm/birdc-rs"
