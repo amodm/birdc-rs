@@ -23,7 +23,7 @@ impl Interface {
             let name = if let Some(s) = it.next() {
                 s
             } else {
-                log::error!("ifc: unable to determine name in {}", content);
+                log::error!("ifc: unable to determine name in {content}");
                 return None;
             };
 
@@ -33,12 +33,12 @@ impl Interface {
                     "up" => true,
                     "down" => false,
                     _ => {
-                        log::error!("ifc: unknown state {}", s);
+                        log::error!("ifc: unknown state {s}");
                         return None;
                     }
                 }
             } else {
-                log::error!("ifc: unable to determine state in {}", content);
+                log::error!("ifc: unable to determine state in {content}");
                 return None;
             };
 
@@ -54,7 +54,7 @@ impl Interface {
                 }
             }
             if index < 0 {
-                log::error!("ifc: did not find an appropriate index in {}", content);
+                log::error!("ifc: did not find an appropriate index in {content}");
                 return None;
             }
 
@@ -98,7 +98,7 @@ impl InterfaceProperties {
                     _ => InterfaceType::Unknown(s.to_owned()),
                 }
             } else {
-                log::error!("ifc: did not find any iftype in {}", content);
+                log::error!("ifc: did not find any iftype in {content}");
                 return None;
             };
             for token in content.split_ascii_whitespace() {
@@ -106,7 +106,7 @@ impl InterfaceProperties {
                     if let Ok(m) = _mtu.parse::<u32>() {
                         mtu = m;
                     } else {
-                        log::error!("ifc: found invalid mtu in line {}", content);
+                        log::error!("ifc: found invalid mtu in line {content}");
                         return None;
                     }
                 } else {
@@ -125,7 +125,7 @@ impl InterfaceProperties {
             }
 
             if mtu == 0 {
-                log::error!("ifc: did not find any iftype in {}", content);
+                log::error!("ifc: did not find any iftype in {content}");
             }
 
             Some(InterfaceProperties { iftype, flags, mtu })
@@ -208,7 +208,7 @@ impl InterfaceAddress {
                 let ip = if let Some(s) = it.next() {
                     s
                 } else {
-                    log::error!("ifc: failed to find ip address in {}", line);
+                    log::error!("ifc: failed to find ip address in {line}");
                     return None;
                 };
 
@@ -220,7 +220,7 @@ impl InterfaceAddress {
                         if let Some(sc) = it.next() {
                             scope = sc.trim_matches(bc).trim_matches(',');
                         } else {
-                            log::error!("ifc: encountered scope but not value in {}", line);
+                            log::error!("ifc: encountered scope but not value in {line}");
                             return None;
                         }
                     } else {
@@ -299,6 +299,19 @@ impl InterfaceSummary {
         }
     }
 }
+
+/// Valid broadcast address set
+const IF_FLAG_BROADCAST: u32 = 1 << 2;
+/// Supports multicast
+const IF_FLAG_MULTICAST: u32 = 1 << 3;
+/// Is a loopback device
+const IF_FLAG_LOOPBACK: u32 = 1 << 5;
+/// Not to be used by routing protocols (loopbacks etc.)
+const IF_FLAG_IGNORED: u32 = 1 << 6;
+/// Interface is running
+const IF_FLAG_ADMIN_UP: u32 = 1 << 7;
+/// L1 layer is up
+const IF_FLAG_LINK_UP: u32 = 1 << 8;
 
 #[cfg(test)]
 mod tests {
@@ -413,16 +426,3 @@ mod tests {
         }
     }
 }
-
-/// Valid broadcast address set
-const IF_FLAG_BROADCAST: u32 = 1 << 2;
-/// Supports multicast
-const IF_FLAG_MULTICAST: u32 = 1 << 3;
-/// Is a loopback device
-const IF_FLAG_LOOPBACK: u32 = 1 << 5;
-/// Not to be used by routing protocols (loopbacks etc.)
-const IF_FLAG_IGNORED: u32 = 1 << 6;
-/// Interface is running
-const IF_FLAG_ADMIN_UP: u32 = 1 << 7;
-/// L1 layer is up
-const IF_FLAG_LINK_UP: u32 = 1 << 8;

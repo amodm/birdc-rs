@@ -40,21 +40,21 @@ impl ShowStatusMessage {
                             if let Ok(dt) = NaiveDateTime::parse_from_str(x.trim(), tfmt) {
                                 server_time = Some(dt);
                             } else {
-                                log::error!("failed to parse timestamp {}", x);
+                                log::error!("failed to parse timestamp {x}");
                                 return None;
                             }
                         } else if let Some(x) = line.strip_prefix("Last reboot on ") {
                             if let Ok(dt) = NaiveDateTime::parse_from_str(x.trim(), tfmt) {
                                 last_reboot_on = Some(dt);
                             } else {
-                                log::error!("failed to parse timestamp {}", x);
+                                log::error!("failed to parse timestamp {x}");
                                 return None;
                             }
                         } else if let Some(x) = line.strip_prefix("Last reconfiguration on ") {
                             if let Ok(dt) = NaiveDateTime::parse_from_str(x.trim(), tfmt) {
                                 last_reconfigured_on = Some(dt);
                             } else {
-                                log::error!("failed to parse timestamp {}", x);
+                                log::error!("failed to parse timestamp {x}");
                                 return None;
                             }
                         }

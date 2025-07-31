@@ -2,8 +2,11 @@
 //!
 //! Refer to documentation of [Connection] for more details.
 
-use std::{collections::VecDeque, io::ErrorKind, path::Path};
-use tokio::net::UnixStream;
+use std::{
+    collections::VecDeque,
+    io::{ErrorKind, Read, Write},
+    path::Path,
+};
 
 use crate::{
     Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Protocol,
@@ -17,7 +20,7 @@ use crate::{
 /// before the response from the previous one has been fully received, you'll
 /// get a [Error::OperationInProgress] error.
 pub struct Connection {
-    stream: UnixStream,
+    stream: tokio::net::UnixStream,
     unparsed_bytes: Vec<u8>,
     unsent_messages: VecDeque<Message>,
     request_in_progress: bool,
@@ -28,7 +31,7 @@ impl Connection {
     /// introductory welcome message before returning the [Connection]
     pub(crate) async fn new<P: AsRef<Path>>(unix_socket: P) -> Result<Self> {
         // connect to the unix socket
-        let stream = UnixStream::connect(unix_socket).await?;
+        let stream = tokio::net::UnixStream::connect(unix_socket).await?;
 
         let mut connection = Connection {
             stream,
@@ -40,7 +43,7 @@ impl Connection {
 
         // process greeting and return
         if let Message::Welcome(ref greeting) = connection.next_message().await? {
-            log::trace!("received greeting {}", greeting);
+            log::trace!("received greeting {greeting}");
             // we need to do this because the message processor automatically adds an Ok
             if let Message::Ok = connection.next_message().await? {
                 log::trace!("handshake completed. connection active");
@@ -118,80 +121,7 @@ impl Connection {
     /// list of [ShowInterfacesMessage] entries, one each for an interface.
     pub async fn show_interfaces(&mut self) -> Result<Vec<ShowInterfacesMessage>> {
         let messages = self.send_request("show interfaces").await?;
-        let mut result = vec![];
-
-        // we expect messages to show up as a series of triplets: 1001, 1004 and 1003
-        let mut idx = 0;
-        loop {
-            // each iteration here means fully going through all of 1001, 1004 and 1003
-
-            // if we're already at end, return
-            if idx >= messages.len() {
-                return Ok(result);
-            }
-
-            // start processing
-            let first_msg = &messages[idx];
-            idx += 1;
-
-            // process only if we find the first entry to be a 1001
-            if let Some(msg_1001) = Interface::from_enum(first_msg) {
-                // get the position of the next 1001
-                let next_1001_idx = messages[idx..]
-                    .iter()
-                    .position(|x| matches!(x, Message::InterfaceList(_)))
-                    .unwrap_or(messages.len() - idx)
-                    + idx;
-                let delta = next_1001_idx - idx;
-                if delta == 0 || delta > 2 {
-                    log::error!(
-                        "conn: parse failed: a 1001 entry without (or more than one) 1003/1004",
-                    );
-                    return Err(Error::ParseError(messages));
-                }
-                let mut msg_1004: Option<InterfaceProperties> = None;
-                let mut msg_1003: Option<Vec<InterfaceAddress>> = None;
-                while idx < next_1001_idx {
-                    let cur_msg = &messages[idx];
-                    idx += 1;
-                    match cur_msg {
-                        Message::InterfaceFlags(_) => {
-                            if let Some(props) = InterfaceProperties::from_enum(cur_msg) {
-                                msg_1004 = Some(props);
-                            } else {
-                                return Err(Error::ParseError(messages));
-                            }
-                        }
-                        Message::InterfaceAddress(_) => {
-                            if let Some(addrs) = InterfaceAddress::from_enum(cur_msg) {
-                                msg_1003 = Some(addrs);
-                            } else {
-                                return Err(Error::ParseError(messages));
-                            }
-                        }
-                        _ => {
-                            log::error!(
-                                "conn: parse failed: found invalid code {}",
-                                messages[idx].code()
-                            );
-                            return Err(Error::ParseError(messages));
-                        }
-                    }
-                }
-                if let Some(msg_1004) = msg_1004 {
-                    result.push(ShowInterfacesMessage {
-                        interface: msg_1001,
-                        properties: msg_1004,
-                        addresses: msg_1003.unwrap_or_default(),
-                    });
-                } else {
-                    log::error!("conn: parse failed: found a 1001 without a 1004");
-                    return Err(Error::ParseError(messages));
-                }
-            } else {
-                return Err(Error::ParseError(messages));
-            }
-        }
+        handle_show_interfaces(messages)
     }
 
     /// Sends a `show protocols [<pattern>]` request and returns the parsed response as a
@@ -201,26 +131,12 @@ impl Connection {
     /// match the pattern.
     pub async fn show_protocols(&mut self, pattern: Option<&str>) -> Result<Vec<Protocol>> {
         let cmd = if let Some(pattern) = pattern {
-            format!("show protocols \"{}\"", pattern)
+            format!("show protocols \"{pattern}\"")
         } else {
             "show protocols".into()
         };
         let messages = self.send_request(&cmd).await?;
-
-        // we ignore the 2002 message, and focus only on 1005
-        for message in &messages {
-            // if we get a 1002, we process it and return it
-            if let Message::ProtocolList(_) = message {
-                return if let Some(protocols) = Protocol::from_enum(message) {
-                    Ok(protocols)
-                } else {
-                    Err(Error::ParseError(messages))
-                };
-            }
-        }
-
-        // if we didn't encounter any 1002, we return a ParseError
-        Err(Error::ParseError(messages))
+        handle_show_protocols(messages)
     }
 
     /// Sends a `show protocols all [<pattern>]` request and returns the parsed response as a
@@ -233,62 +149,12 @@ impl Connection {
         pattern: Option<&str>,
     ) -> Result<Vec<ShowProtocolDetailsMessage>> {
         let cmd = if let Some(pattern) = pattern {
-            format!("show protocols all \"{}\"", pattern)
+            format!("show protocols all \"{pattern}\"")
         } else {
             "show protocols all".into()
         };
-        let mut result = vec![];
         let messages = self.send_request(&cmd).await?;
-
-        // we expect messages to show up as a series of doublets: 1002 and 1006
-        if let Some(mut idx) = messages
-            .iter()
-            .position(|x| matches!(x, Message::ProtocolList(_)))
-        {
-            while idx < messages.len() {
-                // each iteration here means fully going through the pair of 1002 and 1006
-
-                if let Some(protocol) = Protocol::from_enum(&messages[idx]) {
-                    // move index to the next message
-                    idx += 1;
-                    // if we have a valid 1002 ...
-                    if let Some(protocol) = protocol.first() {
-                        // ... check for 1006
-                        if idx == messages.len()
-                            || !matches!(messages[idx], Message::ProtocolDetails(_))
-                        {
-                            // if we're already at the end, or if there's no 1006 after the 1002 we saw
-                            // just a step before, we push the current 1002 without any 1006, and continue
-                            result.push(ShowProtocolDetailsMessage {
-                                protocol: protocol.clone(),
-                                detail: None,
-                            });
-                            continue;
-                        }
-                        // looks like we have a valid 1006, so let's process it
-                        if let Some(detail) = ProtocolDetail::from_enum(&messages[idx]) {
-                            // looks like we got a valid 1006
-                            idx += 1;
-                            result.push(ShowProtocolDetailsMessage {
-                                protocol: protocol.clone(),
-                                detail: Some(detail),
-                            });
-                        } else {
-                            log::error!("conn: failed to parse 1006 message");
-                            return Err(Error::ParseError(messages));
-                        }
-                    }
-                } else {
-                    log::error!("conn: failed to parse 1002 message: {:?}", messages[idx]);
-                    return Err(Error::ParseError(messages));
-                }
-            }
-
-            Ok(result)
-        } else {
-            // No 1002 entries, so empty result
-            Ok(Vec::new())
-        }
+        handle_show_protocols_details(messages)
     }
 
     /// Sends a `show status` request, and returns a semantically parsed response
@@ -355,7 +221,12 @@ impl Connection {
                     return Err(Error::eof("premature EOF"));
                 }
                 Ok(count) => {
-                    if self.enqueue_messages(&frame[..count])? == 0 {
+                    if enqueue_messages(
+                        &frame[..count],
+                        &mut self.unparsed_bytes,
+                        &mut self.unsent_messages,
+                    )? == 0
+                    {
                         // we continue to fetch more if amount of data
                         // was insufficient to parse response
                         continue;
@@ -371,72 +242,452 @@ impl Connection {
             }
         }
     }
+}
 
-    /// Process raw bytes to parse and enqueue messages. On success returns the
-    /// number of messages enqueued.
-    ///
-    /// If we have pending unparsed bytes from previous iterations, we create a
-    /// new buffer that combines the old one with the new `frame`, and then
-    /// processes it.
-    ///
-    /// However, if we don't have any pending unparsed bytes, then it would be
-    /// an overhead to do so, so we just process the frame directly.
-    ///
-    /// In both cases, pending bytes from this iteration are added to
-    /// `unparsed_bytes`
+/// A non-async version of [Connection]
+pub struct SyncConnection {
+    stream: std::os::unix::net::UnixStream,
+    unparsed_bytes: Vec<u8>,
+    unsent_messages: VecDeque<Message>,
+    request_in_progress: bool,
+}
+
+impl SyncConnection {
+    /// Open a new connection to this `unix_socket`, and consumes the
+    /// introductory welcome message before returning the [Connection]
+    pub(crate) fn new<P: AsRef<Path>>(unix_socket: P) -> Result<Self> {
+        let stream = std::os::unix::net::UnixStream::connect(unix_socket)?;
+
+        let mut connection = SyncConnection {
+            stream,
+            unparsed_bytes: Vec::with_capacity(2 * READ_FRAME_SIZE),
+            unsent_messages: VecDeque::with_capacity(20),
+            request_in_progress: true,
+        };
+
+        if let Message::Welcome(ref greeting) = connection.next_message()? {
+            log::trace!("received greeting {greeting}");
+            if let Message::Ok = connection.next_message()? {
+                log::trace!("handshake completed. connection active");
+                connection.allow_new_requests();
+                return Ok(connection);
+            }
+        }
+        Err(Error::InvalidToken("did not find greeting".into()))
+    }
+
+    /// Mark current request/response session as completed, so that new requests can
+    /// be made on this connection.
     #[inline]
-    fn enqueue_messages(&mut self, frame: &[u8]) -> Result<usize> {
-        let num_unparsed = self.unparsed_bytes.len();
-        let has_unparsed = num_unparsed > 0;
-        if has_unparsed {
-            // if we had previously unparsed bytes, we use them in combination with
-            // the new frame
-            let mut new_vec: Vec<u8> = Vec::with_capacity(num_unparsed + frame.len());
-            new_vec.extend_from_slice(&self.unparsed_bytes);
-            new_vec.extend_from_slice(frame);
-            self.enqueue_messages_from_buffer(&new_vec)
+    fn allow_new_requests(&mut self) {
+        self.request_in_progress = false;
+    }
+
+    /// Sends a request to the server and gets a vec of response messages. The
+    /// terminating [Message::Ok] is not included.
+    pub fn send_request(&mut self, request: &str) -> Result<Vec<Message>> {
+        if self.request_in_progress {
+            return Err(Error::OperationInProgress);
+        }
+
+        self.unparsed_bytes.clear();
+        self.unsent_messages.clear();
+
+        let request = if request.ends_with('\n') {
+            request.to_owned()
         } else {
-            // if we didn't have any previously unparsed bytes, we can process this
-            // frame directly, gaining a tiny bit of efficiency. This helps in dealing
-            // with most messages that will tend to be quite small.
-            self.enqueue_messages_from_buffer(frame)
+            format!("{}\n", &request)
+        };
+        let mut result: Vec<Message> = Vec::new();
+        self.write_to_server(&request)?;
+        self.request_in_progress = true;
+
+        loop {
+            let message = self.next_message()?;
+            if let Message::Ok = message {
+                self.allow_new_requests();
+                return Ok(result);
+            } else {
+                result.push(message);
+            }
         }
     }
 
-    /// Processes raw data to parse and enqeueue Messages.
-    ///
-    /// The logic is straighforward, even if cumbersome to look at. We run a loop, where
-    /// at each iteration, we process a new line. In each line, we encounter one of the
-    /// following scenarios (xxxx is a 4 digit code):
-    /// 1. `xxxx<space><content>` - this is the last line in this response
-    /// 2. `xxxx<minus><content>` - this is NOT the last line in this response
-    /// 3. `<space><content>` - same as (2) but the xxxx code is implicitly = previous one
-    ///
-    /// More details about the protocol can be found [here](https://gitlab.nic.cz/labs/bird/-/blob/master/nest/cli.c)
-    ///
-    /// While processing each line, we can return an `Ok(0)` to indicate we need more
-    /// data ([Connection::fetch_new_messages] takes care of that).
-    #[inline]
-    fn enqueue_messages_from_buffer(&mut self, buffer: &[u8]) -> Result<usize> {
-        let bsize = buffer.len();
-        let mut num_messages = 0;
-        let mut pos: usize = 0;
-        let mut code: u32 = 0;
-        let mut msg_start_pos = 0;
-        let mut message_size: usize = 0;
-        let mut last_msg_added_epos = 0;
+    /// Sends a `show interfaces summary` request and returns the parsed response as a
+    /// list of [InterfaceSummary] entries, one each for an interface.
+    pub fn show_interfaces_summary(&mut self) -> Result<Vec<InterfaceSummary>> {
+        let messages = self.send_request("show interfaces summary")?;
 
-        // process things line by line. each iteration of this loop constitutes
-        // a new line
+        for message in &messages {
+            if let Message::InterfaceSummary(_) = message {
+                return if let Some(ifcs) = InterfaceSummary::from_enum(message) {
+                    Ok(ifcs)
+                } else {
+                    Err(Error::ParseError(messages))
+                };
+            }
+        }
+
+        Err(Error::ParseError(messages))
+    }
+
+    /// Sends a `show interfaces` request and returns the parsed response as a
+    /// list of [ShowInterfacesMessage] entries, one each for an interface.
+    pub fn show_interfaces(&mut self) -> Result<Vec<ShowInterfacesMessage>> {
+        let messages = self.send_request("show interfaces")?;
+        handle_show_interfaces(messages)
+    }
+
+    /// Sends a `show protocols [<pattern>]` request and returns the parsed response as a
+    /// list of [InterfaceSummary] entries, one for each protocol.
+    ///
+    /// If `pattern` is specified, results of only those protocols is returned, which
+    /// match the pattern.
+    pub fn show_protocols(&mut self, pattern: Option<&str>) -> Result<Vec<Protocol>> {
+        let cmd = if let Some(pattern) = pattern {
+            format!("show protocols \"{pattern}\"")
+        } else {
+            "show protocols".into()
+        };
+        let messages = self.send_request(&cmd)?;
+        handle_show_protocols(messages)
+    }
+
+    /// Sends a `show protocols all [<pattern>]` request and returns the parsed response as a
+    /// list of [ShowProtocolDetailsMessage] entries, one for each protocol instance.
+    ///
+    /// If `pattern` is specified, results of only those protocols is returned, which
+    /// match the pattern.
+    pub fn show_protocols_details(
+        &mut self,
+        pattern: Option<&str>,
+    ) -> Result<Vec<ShowProtocolDetailsMessage>> {
+        let cmd = if let Some(pattern) = pattern {
+            format!("show protocols all \"{pattern}\"")
+        } else {
+            "show protocols all".into()
+        };
+        let messages = self.send_request(&cmd)?;
+        handle_show_protocols_details(messages)
+    }
+
+    /// Sends a `show status` request, and returns a semantically parsed response
+    /// in the form of [ShowStatusMessage]
+    pub fn show_status(&mut self) -> Result<ShowStatusMessage> {
+        let messages = self.send_request("show status")?;
+
+        match ShowStatusMessage::from_messages(&messages) {
+            Some(ssm) => Ok(ssm),
+            None => Err(Error::ParseError(messages)),
+        }
+    }
+
+    /// Reads a full [Message] from the server, and returns it
+    fn next_message(&mut self) -> Result<Message> {
+        if let Some(pending_message) = self.unsent_messages.pop_front() {
+            return Ok(pending_message);
+        }
+
+        self.fetch_new_messages()?;
+        if let Some(new_message) = self.unsent_messages.pop_front() {
+            Ok(new_message)
+        } else {
+            Err(Error::eof("was expecting more messages"))
+        }
+    }
+
+    /// Writes `request` to the server, returning only after it has been written
+    /// fully.
+    fn write_to_server(&mut self, request: &str) -> Result<()> {
+        let data = request.as_bytes();
+        let total_size = data.len();
+        let mut written_size = 0;
         loop {
-            let line_start_pos = pos;
-            log::trace!("conn: checking if we can start processing a new line");
-            // break or ask for more data if we're at the end, but expected to parse
-            if pos >= bsize {
+            match self.stream.write(data) {
+                Ok(n) => {
+                    written_size += n;
+                    if written_size >= total_size {
+                        return Ok(());
+                    }
+                }
+                Err(err) => {
+                    if err.kind() != ErrorKind::WouldBlock {
+                        return Err(Error::from(err));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fetches and add news messages to the queue.
+    #[inline]
+    fn fetch_new_messages(&mut self) -> Result<()> {
+        loop {
+            let mut frame = [0_u8; READ_FRAME_SIZE];
+            match self.stream.read(&mut frame) {
+                Ok(0) => {
+                    return Err(Error::eof("premature EOF"));
+                }
+                Ok(count) => {
+                    if enqueue_messages(
+                        &frame[..count],
+                        &mut self.unparsed_bytes,
+                        &mut self.unsent_messages,
+                    )? == 0
+                    {
+                        continue;
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Err(err) => {
+                    if err.kind() != ErrorKind::WouldBlock {
+                        return Err(Error::IoError(err));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_show_interfaces(messages: Vec<Message>) -> Result<Vec<ShowInterfacesMessage>> {
+    let mut result = vec![];
+
+    // we expect messages to show up as a series of triplets: 1001, 1004 and 1003
+    let mut idx = 0;
+    loop {
+        // each iteration here means fully going through all of 1001, 1004 and 1003
+
+        // if we're already at end, return
+        if idx >= messages.len() {
+            return Ok(result);
+        }
+
+        // start processing
+        let first_msg = &messages[idx];
+        idx += 1;
+
+        // process only if we find the first entry to be a 1001
+        if let Some(msg_1001) = Interface::from_enum(first_msg) {
+            // get the position of the next 1001
+            let next_1001_idx = messages[idx..]
+                .iter()
+                .position(|x| matches!(x, Message::InterfaceList(_)))
+                .unwrap_or(messages.len() - idx)
+                + idx;
+            let delta = next_1001_idx - idx;
+            if delta == 0 || delta > 2 {
+                log::error!(
+                    "conn: parse failed: a 1001 entry without (or more than one) 1003/1004",
+                );
+                return Err(Error::ParseError(messages));
+            }
+            let mut msg_1004: Option<InterfaceProperties> = None;
+            let mut msg_1003: Option<Vec<InterfaceAddress>> = None;
+            while idx < next_1001_idx {
+                let cur_msg = &messages[idx];
+                idx += 1;
+                match cur_msg {
+                    Message::InterfaceFlags(_) => {
+                        if let Some(props) = InterfaceProperties::from_enum(cur_msg) {
+                            msg_1004 = Some(props);
+                        } else {
+                            return Err(Error::ParseError(messages));
+                        }
+                    }
+                    Message::InterfaceAddress(_) => {
+                        if let Some(addrs) = InterfaceAddress::from_enum(cur_msg) {
+                            msg_1003 = Some(addrs);
+                        } else {
+                            return Err(Error::ParseError(messages));
+                        }
+                    }
+                    _ => {
+                        log::error!(
+                            "conn: parse failed: found invalid code {}",
+                            messages[idx].code()
+                        );
+                        return Err(Error::ParseError(messages));
+                    }
+                }
+            }
+            if let Some(msg_1004) = msg_1004 {
+                result.push(ShowInterfacesMessage {
+                    interface: msg_1001,
+                    properties: msg_1004,
+                    addresses: msg_1003.unwrap_or_default(),
+                });
+            } else {
+                log::error!("conn: parse failed: found a 1001 without a 1004");
+                return Err(Error::ParseError(messages));
+            }
+        } else {
+            return Err(Error::ParseError(messages));
+        }
+    }
+}
+
+fn handle_show_protocols(messages: Vec<Message>) -> Result<Vec<Protocol>> {
+    // we ignore the 2002 message, and focus only on 1005
+    for message in &messages {
+        // if we get a 1002, we process it and return it
+        if let Message::ProtocolList(_) = message {
+            return if let Some(protocols) = Protocol::from_enum(message) {
+                Ok(protocols)
+            } else {
+                Err(Error::ParseError(messages))
+            };
+        }
+    }
+
+    // if we didn't encounter any 1002, we return a ParseError
+    Err(Error::ParseError(messages))
+}
+
+fn handle_show_protocols_details(
+    messages: Vec<Message>,
+) -> Result<Vec<ShowProtocolDetailsMessage>> {
+    let mut result = vec![];
+    // we expect messages to show up as a series of doublets: 1002 and 1006
+    if let Some(mut idx) = messages
+        .iter()
+        .position(|x| matches!(x, Message::ProtocolList(_)))
+    {
+        while idx < messages.len() {
+            // each iteration here means fully going through the pair of 1002 and 1006
+
+            if let Some(protocol) = Protocol::from_enum(&messages[idx]) {
+                // move index to the next message
+                idx += 1;
+                // if we have a valid 1002 ...
+                if let Some(protocol) = protocol.first() {
+                    // ... check for 1006
+                    if idx == messages.len()
+                        || !matches!(messages[idx], Message::ProtocolDetails(_))
+                    {
+                        // if we're already at the end, or if there's no 1006 after the 1002 we saw
+                        // just a step before, we push the current 1002 without any 1006, and continue
+                        result.push(ShowProtocolDetailsMessage {
+                            protocol: protocol.clone(),
+                            detail: None,
+                        });
+                        continue;
+                    }
+                    // looks like we have a valid 1006, so let's process it
+                    if let Some(detail) = ProtocolDetail::from_enum(&messages[idx]) {
+                        // looks like we got a valid 1006
+                        idx += 1;
+                        result.push(ShowProtocolDetailsMessage {
+                            protocol: protocol.clone(),
+                            detail: Some(detail),
+                        });
+                    } else {
+                        log::error!("conn: failed to parse 1006 message");
+                        return Err(Error::ParseError(messages));
+                    }
+                }
+            } else {
+                log::error!("conn: failed to parse 1002 message: {:?}", messages[idx]);
+                return Err(Error::ParseError(messages));
+            }
+        }
+
+        Ok(result)
+    } else {
+        // No 1002 entries, so empty result
+        Ok(Vec::new())
+    }
+}
+
+/// Process raw bytes to parse and enqueue messages. On success returns the
+/// number of messages enqueued.
+///
+/// If we have pending unparsed bytes from previous iterations, we create a
+/// new buffer that combines the old one with the new `frame`, and then
+/// processes it.
+///
+/// However, if we don't have any pending unparsed bytes, then it would be
+/// an overhead to do so, so we just process the frame directly.
+///
+/// In both cases, pending bytes from this iteration are added to
+/// `unparsed_bytes`
+#[inline]
+fn enqueue_messages(
+    frame: &[u8],
+    unparsed_bytes: &mut Vec<u8>,
+    unsent_messages: &mut VecDeque<Message>,
+) -> Result<usize> {
+    let num_unparsed = unparsed_bytes.len();
+    let has_unparsed = num_unparsed > 0;
+    if has_unparsed {
+        // if we had previously unparsed bytes, we use them in combination with
+        // the new frame
+        let mut new_vec: Vec<u8> = Vec::with_capacity(num_unparsed + frame.len());
+        new_vec.extend_from_slice(unparsed_bytes);
+        new_vec.extend_from_slice(frame);
+        enqueue_messages_from_buffer(&new_vec, unparsed_bytes, unsent_messages)
+    } else {
+        // if we didn't have any previously unparsed bytes, we can process this
+        // frame directly, gaining a tiny bit of efficiency. This helps in dealing
+        // with most messages that will tend to be quite small.
+        enqueue_messages_from_buffer(frame, unparsed_bytes, unsent_messages)
+    }
+}
+
+/// Processes raw data to parse and enqeueue Messages.
+///
+/// The logic is straighforward, even if cumbersome to look at. We run a loop, where
+/// at each iteration, we process a new line. In each line, we encounter one of the
+/// following scenarios (xxxx is a 4 digit code):
+/// 1. `xxxx<space><content>` - this is the last line in this response
+/// 2. `xxxx<minus><content>` - this is NOT the last line in this response
+/// 3. `<space><content>` - same as (2) but the xxxx code is implicitly = previous one
+///
+/// More details about the protocol can be found [here](https://gitlab.nic.cz/labs/bird/-/blob/master/nest/cli.c)
+///
+/// While processing each line, we can return an `Ok(0)` to indicate we need more
+/// data ([Connection::fetch_new_messages] takes care of that).
+#[inline]
+fn enqueue_messages_from_buffer(
+    buffer: &[u8],
+    unparsed_bytes: &mut Vec<u8>,
+    unsent_messages: &mut VecDeque<Message>,
+) -> Result<usize> {
+    let bsize = buffer.len();
+    let mut num_messages = 0;
+    let mut pos: usize = 0;
+    let mut code: u32 = 0;
+    let mut msg_start_pos = 0;
+    let mut message_size: usize = 0;
+    let mut last_msg_added_epos = 0;
+
+    // process things line by line. each iteration of this loop constitutes
+    // a new line
+    loop {
+        let line_start_pos = pos;
+        log::trace!("conn: checking if we can start processing a new line");
+        // break or ask for more data if we're at the end, but expected to parse
+        if pos >= bsize {
+            if num_messages > 0 {
+                log::trace!(
+                    "  need more data, exiting loop as already enqueued {num_messages} messages"
+                );
+                break;
+            } else {
+                log::trace!("  need more data");
+                return Ok(0); // we need more data
+            }
+        }
+
+        // if we don't have visibility into the next newline, break or ask
+        // for more data
+        let nl_pos: usize;
+        match buffer[pos..].iter().position(|it| *it == b'\n') {
+            Some(it) => nl_pos = pos + it,
+            None => {
                 if num_messages > 0 {
                     log::trace!(
-                        "  need more data, exiting loop as already enqueued {} messages",
-                        num_messages
+                        "  need more data, exiting loop as already enqueued {num_messages} messages"
                     );
                     break;
                 } else {
@@ -444,157 +695,132 @@ impl Connection {
                     return Ok(0); // we need more data
                 }
             }
+        };
+        let next_line_pos = nl_pos + 1;
 
-            // if we don't have visibility into the next newline, break or ask
-            // for more data
-            let nl_pos: usize;
-            match buffer[pos..].iter().position(|it| *it == b'\n') {
-                Some(it) => nl_pos = pos + it,
-                None => {
-                    if num_messages > 0 {
-                        log::trace!(
-                            "  need more data, exiting loop as already enqueued {} messages",
-                            num_messages
-                        );
-                        break;
-                    } else {
-                        log::trace!("  need more data");
-                        return Ok(0); // we need more data
-                    }
-                }
-            };
-            let next_line_pos = nl_pos + 1;
+        log::trace!(
+            "conn: processing line: {}",
+            String::from_utf8_lossy(&buffer[pos..nl_pos])
+        );
 
-            log::trace!(
-                "conn: processing line: {}",
-                String::from_utf8_lossy(&buffer[pos..nl_pos])
-            );
-
-            if buffer[pos] == b' ' {
-                log::trace!("  no code present, we're a continuation of prev line");
-                pos += 1; // we're now at start of data in this line
-                message_size += nl_pos - pos + 1; // +1 for newline
-            } else {
-                log::trace!("  line has a code, need to check if same as prev or not");
-                // the line does not start with a space, so we MUST see a code
-                // and a continuation/final marker
-                if pos + 5 >= bsize {
-                    if num_messages > 0 {
-                        log::trace!(
-                            "  need more data, exiting loop as already enqueued {} messages",
-                            num_messages
-                        );
-                        break;
-                    } else {
-                        log::trace!("  need more data");
-                        return Ok(0);
-                    }
-                }
-                let new_code = parse_code(&buffer[pos..(pos + 4)])?;
-                let separator = buffer[pos + 4];
-                log::trace!(
-                    "  encountered code {} and separator '{}'",
-                    new_code,
-                    separator as char
-                );
-                let is_last = match separator {
-                    b' ' => true,
-                    b'-' => false,
-                    _ => {
-                        return Err(Error::InvalidToken(format!(
-                            "unknown separator {} after code {}",
-                            separator, new_code
-                        )))
-                    }
-                };
-                pos += 5; // we're now at the start of data in this line
-
-                let mut ok_added = false;
-                if is_last {
-                    // if this is the last line
-                    if new_code == code {
-                        log::trace!(
-                            "  determined to be the last line, but has same code as before {}",
-                            code
-                        );
-                        // treat it as continuation of the previous message
-                        message_size += nl_pos - pos + 1;
-                        let message = parse_message(code, buffer, msg_start_pos, message_size)?;
-                        log::trace!("  pushing last message {:?}", message);
-                        self.unsent_messages.push_back(message);
-                        num_messages += 1;
-                        last_msg_added_epos = nl_pos + 1;
-                    } else {
-                        log::trace!("  determined to be the last line, has new code  {}", code);
-                        // treat this as a new message
-                        // we first push the prev message, if present
-                        if message_size > 0 {
-                            let message = parse_message(code, buffer, msg_start_pos, message_size)?;
-                            log::trace!("  pushing prev to last message {:?}", message);
-                            self.unsent_messages.push_back(message);
-                            num_messages += 1;
-                            // last_msg_added_epos = nl_pos + 1; // not needed as we do this at the end anyway
-                        }
-                        // now we process the new message
-                        code = new_code;
-                        msg_start_pos = pos;
-                        let message = parse_message(code, buffer, msg_start_pos, message_size)?;
-                        log::trace!("  pushing new message {:?}", message);
-                        if let Message::Ok = message {
-                            ok_added = true;
-                        }
-                        self.unsent_messages.push_back(message);
-                        num_messages += 1;
-                        last_msg_added_epos = nl_pos + 1;
-                    }
-                    if !ok_added {
-                        self.unsent_messages.push_back(Message::Ok);
-                    }
+        if buffer[pos] == b' ' {
+            log::trace!("  no code present, we're a continuation of prev line");
+            pos += 1; // we're now at start of data in this line
+            message_size += nl_pos - pos + 1; // +1 for newline
+        } else {
+            log::trace!("  line has a code, need to check if same as prev or not");
+            // the line does not start with a space, so we MUST see a code
+            // and a continuation/final marker
+            if pos + 5 >= bsize {
+                if num_messages > 0 {
+                    log::trace!(
+                        "  need more data, exiting loop as already enqueued {num_messages} messages"
+                    );
                     break;
                 } else {
-                    // if this is not the last line
-                    // if this line is a continuation of the previous one
-                    if new_code == code {
-                        log::trace!("  not the last line, continuing from prev line");
-                        // we just mark this line as extension of previous one
-                        message_size += nl_pos - pos + 1;
-                    } else {
-                        log::trace!("  not the last line, but new code");
-                        // treat this as a new message
-                        // we first push the prev message, if present
-                        if message_size > 0 {
-                            let message = parse_message(code, buffer, msg_start_pos, message_size)?;
-                            log::trace!("  pushing new message {:?}", message);
-                            self.unsent_messages.push_back(message);
-                            num_messages += 1;
-                            last_msg_added_epos = line_start_pos;
-                        }
-                        // now we process the new message
-                        log::trace!(
-                            "  resetting markers for a new message with code {}",
-                            new_code
-                        );
-                        code = new_code;
-                        message_size = nl_pos - pos;
-                        msg_start_pos = pos;
-                    }
+                    log::trace!("  need more data");
+                    return Ok(0);
                 }
             }
-            pos = next_line_pos; // move to the next line
-        }
+            let new_code = parse_code(&buffer[pos..(pos + 4)])?;
+            let separator = buffer[pos + 4];
+            log::trace!(
+                "  encountered code {} and separator '{}'",
+                new_code,
+                separator as char
+            );
+            let is_last = match separator {
+                b' ' => true,
+                b'-' => false,
+                _ => {
+                    return Err(Error::InvalidToken(format!(
+                        "unknown separator {separator} after code {new_code}"
+                    )))
+                }
+            };
+            pos += 5; // we're now at the start of data in this line
 
-        // push all unprocessed bytes to self.unparsed_bytes
-        let remaining = buffer.len() - last_msg_added_epos;
-        log::trace!("conn: found {} pending bytes", remaining);
-        if remaining > 0 {
-            self.unparsed_bytes.clear();
-            let src = &buffer[(buffer.len() - remaining)..];
-            log::trace!("conn: enqueuing pending: {}", &String::from_utf8_lossy(src));
-            self.unparsed_bytes.extend_from_slice(src);
+            let mut ok_added = false;
+            if is_last {
+                // if this is the last line
+                if new_code == code {
+                    log::trace!(
+                        "  determined to be the last line, but has same code as before {code}"
+                    );
+                    // treat it as continuation of the previous message
+                    message_size += nl_pos - pos + 1;
+                    let message = parse_message(code, buffer, msg_start_pos, message_size)?;
+                    log::trace!("  pushing last message {message:?}");
+                    unsent_messages.push_back(message);
+                    num_messages += 1;
+                    last_msg_added_epos = nl_pos + 1;
+                } else {
+                    log::trace!("  determined to be the last line, has new code  {code}");
+                    // treat this as a new message
+                    // we first push the prev message, if present
+                    if message_size > 0 {
+                        let message = parse_message(code, buffer, msg_start_pos, message_size)?;
+                        log::trace!("  pushing prev to last message {message:?}");
+                        unsent_messages.push_back(message);
+                        num_messages += 1;
+                        // last_msg_added_epos = nl_pos + 1; // not needed as we do this at the end anyway
+                    }
+                    // now we process the new message
+                    code = new_code;
+                    msg_start_pos = pos;
+                    let message = parse_message(code, buffer, msg_start_pos, message_size)?;
+                    log::trace!("  pushing new message {message:?}");
+                    if let Message::Ok = message {
+                        ok_added = true;
+                    }
+                    unsent_messages.push_back(message);
+                    num_messages += 1;
+                    last_msg_added_epos = nl_pos + 1;
+                }
+                if !ok_added {
+                    unsent_messages.push_back(Message::Ok);
+                }
+                break;
+            } else {
+                // if this is not the last line
+                // if this line is a continuation of the previous one
+                if new_code == code {
+                    log::trace!("  not the last line, continuing from prev line");
+                    // we just mark this line as extension of previous one
+                    message_size += nl_pos - pos + 1;
+                } else {
+                    log::trace!("  not the last line, but new code");
+                    // treat this as a new message
+                    // we first push the prev message, if present
+                    if message_size > 0 {
+                        let message = parse_message(code, buffer, msg_start_pos, message_size)?;
+                        log::trace!("  pushing new message {message:?}");
+                        unsent_messages.push_back(message);
+                        num_messages += 1;
+                        last_msg_added_epos = line_start_pos;
+                    }
+                    // now we process the new message
+                    log::trace!("  resetting markers for a new message with code {new_code}");
+                    code = new_code;
+                    message_size = nl_pos - pos;
+                    msg_start_pos = pos;
+                }
+            }
         }
-
-        Ok(num_messages)
+        pos = next_line_pos; // move to the next line
     }
+
+    // push all unprocessed bytes to self.unparsed_bytes
+    let remaining = buffer.len() - last_msg_added_epos;
+    log::trace!("conn: found {remaining} pending bytes");
+    if remaining > 0 {
+        unparsed_bytes.clear();
+        let src = &buffer[(buffer.len() - remaining)..];
+        log::trace!("conn: enqueuing pending: {}", &String::from_utf8_lossy(src));
+        unparsed_bytes.extend_from_slice(src);
+    }
+
+    Ok(num_messages)
 }
 
 /// Parse the 4 digit code at the front of a bird response
@@ -720,7 +946,7 @@ mod tests {
         if let Message::InterfaceList(s) = message {
             assert_eq!(s, needle);
         } else {
-            panic!("incorrect message type {:?}", message);
+            panic!("incorrect message type {message:?}");
         }
     }
 
@@ -761,7 +987,7 @@ mod tests {
             assert!(s.ends_with("fe80::4490::72/64 (scope univ)"));
             assert!(!s.ends_with('\n'));
         } else {
-            panic!("incorrect message type {:?}", message);
+            panic!("incorrect message type {message:?}");
         }
     }
 
@@ -793,7 +1019,7 @@ mod tests {
             assert!(s.contains("\n\tfe80:169:254:199::2/126 (scope link)"));
             assert!(!s.ends_with('\n'));
         } else {
-            panic!("incorrect message type {:?}", message);
+            panic!("incorrect message type {message:?}");
         }
     }
 }

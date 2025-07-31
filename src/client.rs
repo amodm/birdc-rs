@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::Path};
 
-use crate::{Connection, Result};
+use crate::{Connection, Result, SyncConnection};
 
 /// A bird client instance. You need to create a [Connection] from this
 /// client, using [Client::connect], to make requests.
@@ -31,5 +31,14 @@ impl Client {
     /// initial hello negotiation with the server fails.
     pub async fn connect(&self) -> Result<Connection> {
         Connection::new(&self.unix_socket).await
+    }
+
+    /// Open a new [SyncConnection] to this client. You can open multiple
+    /// connections to the same client.
+    ///
+    /// Note that this can fail if the unix socket is closed, or if the
+    /// initial hello negotiation with the server fails.
+    pub fn connect_sync(&self) -> Result<SyncConnection> {
+        SyncConnection::new(&self.unix_socket)
     }
 }

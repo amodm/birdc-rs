@@ -1,4 +1,4 @@
-//! Library for async communication with the Bird BGP server.
+//! Library for communication with the Bird BGP server, supporting both sync and async.
 //!
 //! ## Examples
 //! ```no_run
