@@ -735,7 +735,7 @@ fn enqueue_messages_from_buffer(
                 _ => {
                     return Err(Error::InvalidToken(format!(
                         "unknown separator {separator} after code {new_code}"
-                    )))
+                    )));
                 }
             };
             pos += 5; // we're now at the start of data in this line

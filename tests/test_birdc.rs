@@ -361,7 +361,10 @@ fn validate_show_interfaces_response(response: &[Message]) {
         _ => panic!("was expecting Message::InterfaceFlags"),
     }
     match &response[5] {
-        Message::InterfaceAddress(s) => assert_eq!(s, "\t172.30.0.12/16 (Preferred, scope site)\n\t172.29.1.15/32 (scope univ)\n\t172.29.1.16/32 (scope univ)\n\t172.29.1.17/32 (scope univ)\n\tfe80::4495:80ff:fe71:a791/64 (Preferred, scope link)\n\tfe80::4490::72/64 (scope univ)"),
+        Message::InterfaceAddress(s) => assert_eq!(
+            s,
+            "\t172.30.0.12/16 (Preferred, scope site)\n\t172.29.1.15/32 (scope univ)\n\t172.29.1.16/32 (scope univ)\n\t172.29.1.17/32 (scope univ)\n\tfe80::4495:80ff:fe71:a791/64 (Preferred, scope link)\n\tfe80::4490::72/64 (scope univ)"
+        ),
         _ => panic!("was expecting Message::InterfaceAddress"),
     }
     // for device eth1
@@ -377,7 +380,10 @@ fn validate_show_interfaces_response(response: &[Message]) {
         _ => panic!("was expecting Message::InterfaceFlags"),
     }
     match &response[8] {
-        Message::InterfaceAddress(s) => assert_eq!(s, "\t169.254.199.2/30 (Preferred, opposite 169.254.199.1, scope univ)\n\tfe80::a06f:7ff:fea7:c662/64 (Preferred, scope link)\n\tfe80:169:254:199::2/126 (scope link)"),
+        Message::InterfaceAddress(s) => assert_eq!(
+            s,
+            "\t169.254.199.2/30 (Preferred, opposite 169.254.199.1, scope univ)\n\tfe80::a06f:7ff:fea7:c662/64 (Preferred, scope link)\n\tfe80:169:254:199::2/126 (scope link)"
+        ),
         _ => panic!("was expecting Message::InterfaceAddress"),
     }
 }
