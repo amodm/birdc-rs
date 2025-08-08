@@ -8,9 +8,43 @@ use birdc::*;
 mod server;
 use server::*;
 
+macro_rules! test_sync_async_request {
+    ($id:ident($mock:expr, $cmd:ident($( $params:expr ),*), $response:ident, $delay:literal) $test:block) => {
+        #[tokio::test(flavor = "multi_thread")]
+        async fn $id() {
+            let _ = env_logger::try_init();
+            let server = MockServer::start_server($mock, $delay)
+                .await
+                .expect("failed to start server");
+            let client = Client::for_unix_socket(&server.unix_socket);
+            let mut async_conn = client.connect().await.expect("failed to connect client");
+            let $response = async_conn.$cmd($($params),*).await.expect("failed to send request");
+            $test;
+
+            let mut sync_conn = client.connect_sync().expect("failed to connect sync client");
+            let $response = sync_conn.$cmd($($params),*).expect("failed to send sync request");
+            $test;
+
+            server.wait_until(1, 3).await;
+        }
+    };
+
+    ($id:ident($mock:expr, $cmd:ident($( $params:expr ),*), $response:ident) $test:block) => {
+        test_sync_async_request!($id($mock, $cmd($($params),*), $response, 0) $test);
+    };
+
+    ($id:ident($mock:expr, $request:literal, $response:ident, $delay:literal) $test:block) => {
+        test_sync_async_request!($id($mock, send_request($request), $response, $delay) $test);
+    };
+
+    ($id:ident($mock:expr, $request:literal, $response:ident) $test:block) => {
+        test_sync_async_request!($id($mock, $request, $response, 0) $test);
+    }
+}
+
 /// This tests if the client open, and the greeting exchange works correctly
 /// for a single client.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_single_client_open() {
     let _ = env_logger::try_init();
     let server = MockServer::start_server("", 0)
@@ -18,6 +52,9 @@ async fn test_single_client_open() {
         .expect("failed to start server");
     let client = Client::for_unix_socket(&server.unix_socket);
     client.connect().await.expect("failed to connect client");
+    client
+        .connect_sync()
+        .expect("failed to connect sync client");
     server.wait_until(1, 3).await;
 }
 
@@ -37,342 +74,259 @@ async fn test_multiple_client_open() {
     server.wait_until(1, 3).await;
 }
 
-/// This tests if we receive the right sequence of response [Message]s from the
-/// server, upon a `show interfaces` command
-#[tokio::test]
-async fn test_raw_protocol() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_test_text(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let response = connection
-        .send_request("show interfaces")
-        .await
-        .expect("failed to send request");
-    validate_show_interfaces_response(&response);
+// This tests if we receive the right sequence of response [Message]s from the
+// server, upon a `show interfaces` command
+test_sync_async_request!(
+    test_raw_protocol(&get_test_text(), "show interfaces", response) {
+        validate_show_interfaces_response(&response);
+    }
+);
 
-    server.wait_until(1, 3).await;
-}
+// Tests for raw protocol, just like [test_raw_protocol], but the server
+// sends response in delayed batches, to test buffering.
+test_sync_async_request!(
+    test_raw_protocol_with_delays(&get_test_text(), "show interfaces", response, 100) {
+        validate_show_interfaces_response(&response);
+    }
+);
 
-/// Tests for raw protocol, just like [test_raw_protocol], but the server
-/// sends response in delayed batches, to test buffering.
-#[tokio::test]
-async fn test_raw_protocol_with_delays() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_test_text(), 100)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let response = connection
-        .send_request("show interfaces")
-        .await
-        .expect("failed to send request");
-    validate_show_interfaces_response(&response);
+test_sync_async_request!(
+    test_show_interfaces(&get_test_text(), show_interfaces(), response, 0) {
+        assert_eq!(response.len(), 3);
+    }
+);
 
-    server.wait_until(1, 3).await;
-}
+test_sync_async_request!(
+    test_show_interfaces_summary(&get_interfaces_summary(), show_interfaces_summary(), response, 0) {
+        assert_eq!(response.len(), 3);
 
-#[tokio::test]
-async fn test_show_interfaces() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_test_text(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let response = connection
-        .show_interfaces()
-        .await
-        .expect("failed to parse response");
-    assert_eq!(response.len(), 3);
+        assert_eq!(response[0].name, "lo");
+        assert_eq!(response[0].state, "up");
+        assert!(matches!(&response[0].ipv4_address, Some(x) if x == "127.0.0.1/8"));
+        assert!(matches!(&response[0].ipv6_address, Some(x) if x == "::1/128"));
 
-    server.wait_until(1, 3).await;
-}
+        assert_eq!(response[1].name, "eth0");
+        assert_eq!(response[1].state, "up");
+        assert!(matches!(&response[1].ipv4_address, Some(x) if x == "172.30.0.12/16"));
+        assert!(matches!(&response[1].ipv6_address, Some(x) if x == "fe80::4495:80ff:fe71:a791/64"));
 
-#[tokio::test]
-async fn test_show_interfaces_summary() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_interfaces_summary(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let response = connection
-        .show_interfaces_summary()
-        .await
-        .expect("failed to parse response");
-    assert_eq!(response.len(), 3);
+        assert_eq!(response[2].name, "eth1");
+        assert_eq!(response[2].state, "up");
+        assert!(matches!(&response[2].ipv4_address, Some(x) if x == "169.254.199.2/30"));
+        assert!(matches!(&response[2].ipv6_address, Some(x) if x == "fe80::a06f:7ff:fea7:c662/64"));
+    }
+);
 
-    assert_eq!(response[0].name, "lo");
-    assert_eq!(response[0].state, "up");
-    assert!(matches!(&response[0].ipv4_address, Some(x) if x == "127.0.0.1/8"));
-    assert!(matches!(&response[0].ipv6_address, Some(x) if x == "::1/128"));
+test_sync_async_request!(
+    test_show_protocols(&get_protocols(), show_protocols(None), protocol) {
+        assert_eq!(protocol.len(), 7);
 
-    assert_eq!(response[1].name, "eth0");
-    assert_eq!(response[1].state, "up");
-    assert!(matches!(&response[1].ipv4_address, Some(x) if x == "172.30.0.12/16"));
-    assert!(matches!(&response[1].ipv6_address, Some(x) if x == "fe80::4495:80ff:fe71:a791/64"));
+        assert_eq!(protocol[0].name, "device1");
+        assert_eq!(protocol[0].proto, "Device");
+        assert!(protocol[0].table.is_none());
+        assert_eq!(protocol[0].state, "up");
+        assert_eq!(protocol[0].since, "2022-04-14");
+        assert!(protocol[0].info.is_none());
 
-    assert_eq!(response[2].name, "eth1");
-    assert_eq!(response[2].state, "up");
-    assert!(matches!(&response[2].ipv4_address, Some(x) if x == "169.254.199.2/30"));
-    assert!(matches!(&response[2].ipv6_address, Some(x) if x == "fe80::a06f:7ff:fea7:c662/64"));
+        assert_eq!(protocol[1].name, "direct_eth0");
+        assert_eq!(protocol[1].proto, "Direct");
+        assert!(protocol[1].table.is_none());
+        assert_eq!(protocol[1].state, "up");
+        assert_eq!(protocol[1].since, "2022-04-14");
+        assert!(protocol[1].info.is_none());
 
-    server.wait_until(1, 3).await;
-}
+        assert_eq!(protocol[2].name, "kernel_v4");
+        assert_eq!(protocol[2].proto, "Kernel");
+        assert_eq!(protocol[2].table.as_ref().unwrap(), "master4");
+        assert_eq!(protocol[2].state, "up");
+        assert_eq!(protocol[2].since, "2022-04-14");
+        assert!(protocol[2].info.is_none());
 
-#[tokio::test]
-async fn test_show_protocols() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_protocols(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let protocol = connection
-        .show_protocols(None)
-        .await
-        .expect("failed to parse response");
+        assert_eq!(protocol[3].name, "kernel_v6");
+        assert_eq!(protocol[3].proto, "Kernel");
+        assert_eq!(protocol[3].table.as_ref().unwrap(), "master6");
+        assert_eq!(protocol[3].state, "up");
+        assert_eq!(protocol[3].since, "2022-04-14");
+        assert!(protocol[3].info.is_none());
 
-    assert_eq!(protocol.len(), 7);
+        assert_eq!(protocol[4].name, "bfd1");
+        assert_eq!(protocol[4].proto, "BFD");
+        assert!(protocol[4].table.is_none());
+        assert_eq!(protocol[4].state, "up");
+        assert_eq!(protocol[4].since, "2022-04-14");
+        assert!(protocol[4].info.is_none());
 
-    assert_eq!(protocol[0].name, "device1");
-    assert_eq!(protocol[0].proto, "Device");
-    assert!(protocol[0].table.is_none());
-    assert_eq!(protocol[0].state, "up");
-    assert_eq!(protocol[0].since, "2022-04-14");
-    assert!(protocol[0].info.is_none());
+        assert_eq!(protocol[5].name, "bgp_local4");
+        assert_eq!(protocol[5].proto, "BGP");
+        assert!(protocol[5].table.is_none());
+        assert_eq!(protocol[5].state, "up");
+        assert_eq!(protocol[5].since, "2022-04-16");
+        assert_eq!(protocol[5].info.as_ref().unwrap(), "Established");
 
-    assert_eq!(protocol[1].name, "direct_eth0");
-    assert_eq!(protocol[1].proto, "Direct");
-    assert!(protocol[1].table.is_none());
-    assert_eq!(protocol[1].state, "up");
-    assert_eq!(protocol[1].since, "2022-04-14");
-    assert!(protocol[1].info.is_none());
+        assert_eq!(protocol[6].name, "bgp_local6");
+        assert_eq!(protocol[6].proto, "BGP");
+        assert!(protocol[6].table.is_none());
+        assert_eq!(protocol[6].state, "up");
+        assert_eq!(protocol[6].since, "2022-04-16");
+        assert_eq!(protocol[6].info.as_ref().unwrap(), "Established");
+    }
+);
 
-    assert_eq!(protocol[2].name, "kernel_v4");
-    assert_eq!(protocol[2].proto, "Kernel");
-    assert_eq!(protocol[2].table.as_ref().unwrap(), "master4");
-    assert_eq!(protocol[2].state, "up");
-    assert_eq!(protocol[2].since, "2022-04-14");
-    assert!(protocol[2].info.is_none());
+test_sync_async_request!(
+    test_show_protocols_pattern(&get_protocols_only_kernel(), show_protocols(Some("kernel*")), protocol) {
+        assert_eq!(protocol.len(), 2);
 
-    assert_eq!(protocol[3].name, "kernel_v6");
-    assert_eq!(protocol[3].proto, "Kernel");
-    assert_eq!(protocol[3].table.as_ref().unwrap(), "master6");
-    assert_eq!(protocol[3].state, "up");
-    assert_eq!(protocol[3].since, "2022-04-14");
-    assert!(protocol[3].info.is_none());
+        assert_eq!(protocol[0].name, "kernel_v4");
+        assert_eq!(protocol[0].proto, "Kernel");
+        assert_eq!(protocol[0].table.as_ref().unwrap(), "master4");
+        assert_eq!(protocol[0].state, "up");
+        assert_eq!(protocol[0].since, "2022-04-14");
+        assert!(protocol[0].info.is_none());
 
-    assert_eq!(protocol[4].name, "bfd1");
-    assert_eq!(protocol[4].proto, "BFD");
-    assert!(protocol[4].table.is_none());
-    assert_eq!(protocol[4].state, "up");
-    assert_eq!(protocol[4].since, "2022-04-14");
-    assert!(protocol[4].info.is_none());
+        assert_eq!(protocol[1].name, "kernel_v6");
+        assert_eq!(protocol[1].proto, "Kernel");
+        assert_eq!(protocol[1].table.as_ref().unwrap(), "master6");
+        assert_eq!(protocol[1].state, "up");
+        assert_eq!(protocol[1].since, "2022-04-14");
+        assert!(protocol[1].info.is_none());
+    }
+);
 
-    assert_eq!(protocol[5].name, "bgp_local4");
-    assert_eq!(protocol[5].proto, "BGP");
-    assert!(protocol[5].table.is_none());
-    assert_eq!(protocol[5].state, "up");
-    assert_eq!(protocol[5].since, "2022-04-16");
-    assert_eq!(protocol[5].info.as_ref().unwrap(), "Established");
+test_sync_async_request!(
+    test_show_protocols_all(&get_protocols_all(), show_protocols_details(None), protocols) {
+        assert_eq!(protocols.len(), 7);
 
-    assert_eq!(protocol[6].name, "bgp_local6");
-    assert_eq!(protocol[6].proto, "BGP");
-    assert!(protocol[6].table.is_none());
-    assert_eq!(protocol[6].state, "up");
-    assert_eq!(protocol[6].since, "2022-04-16");
-    assert_eq!(protocol[6].info.as_ref().unwrap(), "Established");
-}
+        assert_eq!(protocols[0].protocol.name, "device1");
+        assert_eq!(protocols[0].protocol.proto, "Device");
+        assert_eq!(protocols[0].protocol.state, "up");
+        assert_eq!(protocols[0].protocol.since, "2022-04-14");
+        assert!(protocols[0].detail.is_none());
 
-#[tokio::test]
-async fn test_show_protocols_pattern() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_protocols_only_kernel(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let protocol = connection
-        .show_protocols(Some("kernel*"))
-        .await
-        .expect("failed to parse response");
+        assert_eq!(protocols[1].protocol.name, "direct_eth0");
+        assert_eq!(protocols[1].protocol.proto, "Direct");
+        assert_eq!(protocols[1].protocol.state, "up");
+        assert_eq!(protocols[1].protocol.since, "2022-04-14");
+        let details = protocols[1]
+            .detail
+            .as_ref()
+            .expect("detail should've been present");
+        assert!(details.proto_info.is_none());
+        assert_eq!(details.channels[0].name, "ipv4");
+        assert_eq!(details.channels[0].state, "UP");
+        assert_eq!(details.channels[0].table, "master4");
+        assert_eq!(details.channels[1].name, "ipv6");
+        assert_eq!(details.channels[1].state, "UP");
+        assert_eq!(details.channels[1].table, "master6");
 
-    assert_eq!(protocol.len(), 2);
+        assert_eq!(protocols[2].protocol.name, "kernel_v4");
+        assert_eq!(protocols[2].protocol.proto, "Kernel");
+        assert_eq!(protocols[2].protocol.state, "up");
+        assert_eq!(protocols[2].protocol.since, "2022-04-14");
+        let details = protocols[2]
+            .detail
+            .as_ref()
+            .expect("detail should've been present");
+        assert!(details.proto_info.is_none());
+        assert_eq!(details.channels[0].name, "ipv4");
+        assert_eq!(details.channels[0].state, "UP");
+        assert_eq!(details.channels[0].table, "master4");
 
-    assert_eq!(protocol[0].name, "kernel_v4");
-    assert_eq!(protocol[0].proto, "Kernel");
-    assert_eq!(protocol[0].table.as_ref().unwrap(), "master4");
-    assert_eq!(protocol[0].state, "up");
-    assert_eq!(protocol[0].since, "2022-04-14");
-    assert!(protocol[0].info.is_none());
+        assert_eq!(protocols[3].protocol.name, "kernel_v6");
+        assert_eq!(protocols[3].protocol.proto, "Kernel");
+        assert_eq!(protocols[3].protocol.state, "up");
+        assert_eq!(protocols[3].protocol.since, "2022-04-14");
+        let details = protocols[3]
+            .detail
+            .as_ref()
+            .expect("detail should've been present");
+        assert!(details.proto_info.is_none());
+        assert_eq!(details.channels[0].name, "ipv6");
+        assert_eq!(details.channels[0].state, "UP");
+        assert_eq!(details.channels[0].table, "master6");
 
-    assert_eq!(protocol[1].name, "kernel_v6");
-    assert_eq!(protocol[1].proto, "Kernel");
-    assert_eq!(protocol[1].table.as_ref().unwrap(), "master6");
-    assert_eq!(protocol[1].state, "up");
-    assert_eq!(protocol[1].since, "2022-04-14");
-    assert!(protocol[1].info.is_none());
-}
+        assert_eq!(protocols[4].protocol.name, "bfd1");
+        assert_eq!(protocols[4].protocol.proto, "BFD");
+        assert_eq!(protocols[4].protocol.state, "up");
+        assert_eq!(protocols[4].protocol.since, "2022-04-14");
+        assert!(protocols[4].detail.is_none());
 
-#[tokio::test]
-async fn test_show_protocols_all() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_protocols_all(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let protocols = connection
-        .show_protocols_details(None)
-        .await
-        .expect("failed to parse response");
+        assert_eq!(protocols[5].protocol.name, "bgp_r1_v4");
+        assert_eq!(protocols[5].protocol.proto, "BGP");
+        assert_eq!(protocols[5].protocol.state, "up");
+        assert_eq!(protocols[5].protocol.since, "2022-04-14");
+        let details = protocols[5]
+            .detail
+            .as_ref()
+            .expect("detail should've been present");
+        assert!(matches!(&details.description, Some(x) if x == "IPv4 BGP with internal router"));
+        let ProtoSpecificInfo::Bgp(bgp_info) = details
+            .proto_info
+            .as_ref()
+            .expect("proto info should've been present");
+        assert_eq!(bgp_info.local_as, 64560);
+        assert_eq!(bgp_info.neighbor_as, 64561);
+        let bgp_session = bgp_info
+            .session
+            .as_ref()
+            .expect("expected bgp session to be present");
+        assert_eq!(bgp_session.neighbor_id, "172.29.0.1");
+        assert_eq!(bgp_session.hold_time, 240);
+        assert_eq!(bgp_session.keepalive_time, 80);
+        assert_eq!(details.channels[0].name, "ipv4");
+        assert_eq!(details.channels[0].state, "UP");
+        let route_stats = details.channels[0]
+            .route_stats
+            .as_ref()
+            .expect("route stats should've been present");
+        assert_eq!(route_stats.imported, 1);
+        assert_eq!(route_stats.exported, 0);
 
-    assert_eq!(protocols.len(), 7);
+        assert_eq!(protocols[6].protocol.name, "bgp_r1_v6");
+        assert_eq!(protocols[6].protocol.proto, "BGP");
+        assert_eq!(protocols[6].protocol.state, "up");
+        assert_eq!(protocols[6].protocol.since, "2022-04-14");
+        let details = protocols[6]
+            .detail
+            .as_ref()
+            .expect("detail should've been present");
+        assert!(matches!(&details.description, Some(x) if x == "IPv6 BGP with internal router"));
+        let ProtoSpecificInfo::Bgp(bgp_info) = details
+            .proto_info
+            .as_ref()
+            .expect("proto info should've been present");
+        assert_eq!(bgp_info.local_as, 64560);
+        assert_eq!(bgp_info.neighbor_as, 64561);
+        let bgp_session = bgp_info
+            .session
+            .as_ref()
+            .expect("expected bgp session to be present");
+        assert_eq!(bgp_session.neighbor_id, "172.29.0.1");
+        assert_eq!(bgp_session.hold_time, 240);
+        assert_eq!(bgp_session.keepalive_time, 80);
+        assert_eq!(details.channels[0].name, "ipv6");
+        assert_eq!(details.channels[0].state, "UP");
+        let route_stats = details.channels[0]
+            .route_stats
+            .as_ref()
+            .expect("route stats should've been present");
+        assert_eq!(route_stats.imported, 1);
+        assert_eq!(route_stats.exported, 0);
+    }
+);
 
-    assert_eq!(protocols[0].protocol.name, "device1");
-    assert_eq!(protocols[0].protocol.proto, "Device");
-    assert_eq!(protocols[0].protocol.state, "up");
-    assert_eq!(protocols[0].protocol.since, "2022-04-14");
-    assert!(protocols[0].detail.is_none());
-
-    assert_eq!(protocols[1].protocol.name, "direct_eth0");
-    assert_eq!(protocols[1].protocol.proto, "Direct");
-    assert_eq!(protocols[1].protocol.state, "up");
-    assert_eq!(protocols[1].protocol.since, "2022-04-14");
-    let details = protocols[1]
-        .detail
-        .as_ref()
-        .expect("detail should've been present");
-    assert!(details.proto_info.is_none());
-    assert_eq!(details.channels[0].name, "ipv4");
-    assert_eq!(details.channels[0].state, "UP");
-    assert_eq!(details.channels[0].table, "master4");
-    assert_eq!(details.channels[1].name, "ipv6");
-    assert_eq!(details.channels[1].state, "UP");
-    assert_eq!(details.channels[1].table, "master6");
-
-    assert_eq!(protocols[2].protocol.name, "kernel_v4");
-    assert_eq!(protocols[2].protocol.proto, "Kernel");
-    assert_eq!(protocols[2].protocol.state, "up");
-    assert_eq!(protocols[2].protocol.since, "2022-04-14");
-    let details = protocols[2]
-        .detail
-        .as_ref()
-        .expect("detail should've been present");
-    assert!(details.proto_info.is_none());
-    assert_eq!(details.channels[0].name, "ipv4");
-    assert_eq!(details.channels[0].state, "UP");
-    assert_eq!(details.channels[0].table, "master4");
-
-    assert_eq!(protocols[3].protocol.name, "kernel_v6");
-    assert_eq!(protocols[3].protocol.proto, "Kernel");
-    assert_eq!(protocols[3].protocol.state, "up");
-    assert_eq!(protocols[3].protocol.since, "2022-04-14");
-    let details = protocols[3]
-        .detail
-        .as_ref()
-        .expect("detail should've been present");
-    assert!(details.proto_info.is_none());
-    assert_eq!(details.channels[0].name, "ipv6");
-    assert_eq!(details.channels[0].state, "UP");
-    assert_eq!(details.channels[0].table, "master6");
-
-    assert_eq!(protocols[4].protocol.name, "bfd1");
-    assert_eq!(protocols[4].protocol.proto, "BFD");
-    assert_eq!(protocols[4].protocol.state, "up");
-    assert_eq!(protocols[4].protocol.since, "2022-04-14");
-    assert!(protocols[4].detail.is_none());
-
-    assert_eq!(protocols[5].protocol.name, "bgp_r1_v4");
-    assert_eq!(protocols[5].protocol.proto, "BGP");
-    assert_eq!(protocols[5].protocol.state, "up");
-    assert_eq!(protocols[5].protocol.since, "2022-04-14");
-    let details = protocols[5]
-        .detail
-        .as_ref()
-        .expect("detail should've been present");
-    assert!(matches!(&details.description, Some(x) if x == "IPv4 BGP with internal router"));
-    let ProtoSpecificInfo::Bgp(bgp_info) = details
-        .proto_info
-        .as_ref()
-        .expect("proto info should've been present");
-    assert_eq!(bgp_info.local_as, 64560);
-    assert_eq!(bgp_info.neighbor_as, 64561);
-    let bgp_session = bgp_info
-        .session
-        .as_ref()
-        .expect("expected bgp session to be present");
-    assert_eq!(bgp_session.neighbor_id, "172.29.0.1");
-    assert_eq!(bgp_session.hold_time, 240);
-    assert_eq!(bgp_session.keepalive_time, 80);
-    assert_eq!(details.channels[0].name, "ipv4");
-    assert_eq!(details.channels[0].state, "UP");
-    let route_stats = details.channels[0]
-        .route_stats
-        .as_ref()
-        .expect("route stats should've been present");
-    assert_eq!(route_stats.imported, 1);
-    assert_eq!(route_stats.exported, 0);
-
-    assert_eq!(protocols[6].protocol.name, "bgp_r1_v6");
-    assert_eq!(protocols[6].protocol.proto, "BGP");
-    assert_eq!(protocols[6].protocol.state, "up");
-    assert_eq!(protocols[6].protocol.since, "2022-04-14");
-    let details = protocols[6]
-        .detail
-        .as_ref()
-        .expect("detail should've been present");
-    assert!(matches!(&details.description, Some(x) if x == "IPv6 BGP with internal router"));
-    let ProtoSpecificInfo::Bgp(bgp_info) = details
-        .proto_info
-        .as_ref()
-        .expect("proto info should've been present");
-    assert_eq!(bgp_info.local_as, 64560);
-    assert_eq!(bgp_info.neighbor_as, 64561);
-    let bgp_session = bgp_info
-        .session
-        .as_ref()
-        .expect("expected bgp session to be present");
-    assert_eq!(bgp_session.neighbor_id, "172.29.0.1");
-    assert_eq!(bgp_session.hold_time, 240);
-    assert_eq!(bgp_session.keepalive_time, 80);
-    assert_eq!(details.channels[0].name, "ipv6");
-    assert_eq!(details.channels[0].state, "UP");
-    let route_stats = details.channels[0]
-        .route_stats
-        .as_ref()
-        .expect("route stats should've been present");
-    assert_eq!(route_stats.imported, 1);
-    assert_eq!(route_stats.exported, 0);
-}
-
-#[tokio::test]
-async fn test_show_status() {
-    let _ = env_logger::try_init();
-    let server = MockServer::start_server(&get_show_status(), 0)
-        .await
-        .expect("failed to start server");
-    let client = Client::for_unix_socket(&server.unix_socket);
-    let mut connection = client.connect().await.expect("failed to connect client");
-    let status = connection
-        .show_status()
-        .await
-        .expect("failed to parse ShowStatusMessage");
-    assert_eq!(status.version_line, "BIRD 2.0.7");
-    assert_eq!(status.router_id, "172.29.0.12");
-    assert_eq!(status.server_time.to_string(), "2022-05-08 10:14:23.381");
-    assert_eq!(status.last_reboot_on.to_string(), "2022-04-14 22:23:28.096");
-    assert_eq!(
-        status.last_reconfigured_on.to_string(),
-        "2022-04-15 00:00:46.707",
-    );
-    assert_eq!(status.status, "Daemon is up and running");
-}
+test_sync_async_request!(
+    test_show_status(&get_show_status(), show_status(), status) {
+        assert_eq!(status.version_line, "BIRD 2.0.7");
+        assert_eq!(status.router_id, "172.29.0.12");
+        assert_eq!(status.server_time.to_string(), "2022-05-08 10:14:23.381");
+        assert_eq!(status.last_reboot_on.to_string(), "2022-04-14 22:23:28.096");
+        assert_eq!(
+            status.last_reconfigured_on.to_string(),
+            "2022-04-15 00:00:46.707",
+        );
+        assert_eq!(status.status, "Daemon is up and running");
+    }
+);
 
 /// Validates response of `show interfaces` command
 fn validate_show_interfaces_response(response: &[Message]) {

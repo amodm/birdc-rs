@@ -90,7 +90,7 @@ impl MockServer {
                             );
                             if delay_ms > 0 {
                                 for ref c in split_content(response) {
-                                    log::trace!("sending chunk: {}", c);
+                                    log::trace!("sending chunk: {c}");
                                     Self::write_to_client(&stream, c).await;
                                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                                 }
@@ -103,7 +103,7 @@ impl MockServer {
                     }
                     Err(err) => {
                         if err.kind() != std::io::ErrorKind::WouldBlock {
-                            panic!("server: encountered IO error: {}", err);
+                            panic!("server: encountered IO error: {err}");
                         }
                     }
                 }
@@ -136,8 +136,7 @@ impl MockServer {
             let expired = Instant::now().duration_since(start) > duration;
             assert!(
                 !expired,
-                "timed out waiting for {} client connections",
-                num_clients
+                "timed out waiting for {num_clients} client connections"
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
