@@ -35,14 +35,23 @@ impl Protocol {
         if let Message::ProtocolList(content) = message {
             let mut result = vec![];
             for line in content.lines() {
-                let mut it = line.split_ascii_whitespace();
+                let (name, next) = line.split_once(" ")?;
+                let (proto, next) = next.trim_start().split_once(" ")?;
+                let (table, next) = next.trim_start().split_once(" ")?;
+                let (state, next) = next.trim_start().split_once(" ")?;
+                let next = next.trim();
+                let (since, info) = match next.split_once("  ") {
+                    None => (next, None),
+                    Some((since, info)) => (since, Some(info.trim_start().to_owned())),
+                };
+
                 result.push(Protocol {
-                    name: it.next()?.to_owned(),
-                    proto: it.next()?.to_owned(),
-                    table: filler_to_option(it.next()?),
-                    state: it.next()?.to_owned(),
-                    since: it.next()?.to_owned(),
-                    info: it.next().map(|x| x.to_owned()),
+                    name: name.to_owned(),
+                    proto: proto.to_owned(),
+                    table: filler_to_option(table),
+                    state: state.to_owned(),
+                    since: since.to_owned(),
+                    info,
                 })
             }
             Some(result)
@@ -486,14 +495,16 @@ mod tests {
         kernel_v6  Kernel     master6    up     2022-04-14    
         bfd1       BFD        ---        up     2022-04-14    
         bgp_local4 BGP        ---        up     2022-04-16    Established   
-        bgp_local6 BGP        ---        up     2022-04-16    Established"
+        bgp_local6 BGP        ---        up     2022-04-16    Established
+        pipe6_kernel_main Pipe       ---        up     2025-10-17    table6_kernel_main <=> table6_meadow
+        pipe6_kernel_default Pipe       ---        up     2025-10-17 08:18:58  table6_kernel_default <=> table6_meadow"
             .lines()
             .map(|x| x.trim_start())
             .collect::<Vec<&str>>()
             .join("\n");
         let protocol =
             Protocol::from_enum(&Message::ProtocolList(content)).expect("failed to parse");
-        assert_eq!(protocol.len(), 7);
+        assert_eq!(protocol.len(), 9);
 
         assert_eq!(protocol[0].name, "device1");
         assert_eq!(protocol[0].proto, "Device");
@@ -543,6 +554,26 @@ mod tests {
         assert_eq!(protocol[6].state, "up");
         assert_eq!(protocol[6].since, "2022-04-16");
         assert_eq!(protocol[6].info.as_ref().unwrap(), "Established");
+
+        assert_eq!(protocol[7].name, "pipe6_kernel_main");
+        assert_eq!(protocol[7].proto, "Pipe");
+        assert!(protocol[7].table.is_none());
+        assert_eq!(protocol[7].state, "up");
+        assert_eq!(protocol[7].since, "2025-10-17");
+        assert_eq!(
+            protocol[7].info.as_ref().unwrap(),
+            "table6_kernel_main <=> table6_meadow"
+        );
+
+        assert_eq!(protocol[8].name, "pipe6_kernel_default");
+        assert_eq!(protocol[8].proto, "Pipe");
+        assert!(protocol[8].table.is_none());
+        assert_eq!(protocol[8].state, "up");
+        assert_eq!(protocol[8].since, "2025-10-17 08:18:58");
+        assert_eq!(
+            protocol[8].info.as_ref().unwrap(),
+            "table6_kernel_default <=> table6_meadow"
+        );
     }
 
     #[test]
