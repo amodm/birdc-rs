@@ -826,7 +826,18 @@ fn enqueue_messages_from_buffer(
 /// Parse the 4 digit code at the front of a bird response
 #[inline]
 fn parse_code(buffer: &[u8]) -> Result<u32> {
-    Ok(std::str::from_utf8(&buffer[0..4])?.parse()?)
+    let text = std::str::from_utf8(&buffer[0..4])?;
+    match text.parse() {
+        Ok(num) => Ok(num),
+        Err(err) => {
+            log::error!(
+                "failed to parse string to u32. this is not a u32: '{}'\n{}",
+                text,
+                err
+            );
+            Err(err.into())
+        }
+    }
 }
 
 /// Parse a [Message] and return it
