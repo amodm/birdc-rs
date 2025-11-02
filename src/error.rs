@@ -25,27 +25,35 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::IoError(_) => write!(f, "IO operation failed"),
+            Error::IoError(text) => write!(f, "IO operation failed: {}", text),
             Error::ProtocolError(msg) => {
                 write!(f, "received an error message from server")?;
                 match msg {
-                    Message::ReplyTooLong(_) => write!(f, ": reply too long"),
-                    Message::RouteNotFound(_) => write!(f, ": route not found"),
-                    Message::ConfigurationFileError(_) => write!(f, ": configuration file error"),
-                    Message::NoProtocolsMatch(_) => write!(f, ": no protocols match"),
-                    Message::StoppedDueToReconfiguration(_) => {
-                        write!(f, ": stopped due to reconfiguration")
+                    Message::ReplyTooLong(text) => write!(f, ": reply too long: {}", text),
+                    Message::RouteNotFound(text) => write!(f, ": route not found: {}", text),
+                    Message::ConfigurationFileError(text) => {
+                        write!(f, ": configuration file error: {}", text)
                     }
-                    Message::ProtocolDown(_) => write!(f, ": protocol is down => connot dump"),
-                    Message::ReloadFailed(_) => write!(f, ": reload failed"),
-                    Message::AccessDenied(_) => write!(f, ": access denied"),
-                    Message::RuntimeError(..) => write!(f, ": evaluation runtime error"),
+                    Message::NoProtocolsMatch(text) => write!(f, ": no protocols match: {}", text),
+                    Message::StoppedDueToReconfiguration(text) => {
+                        write!(f, ": stopped due to reconfiguration: {}", text)
+                    }
+                    Message::ProtocolDown(text) => {
+                        write!(f, ": protocol is down => connot dump: {}", text)
+                    }
+                    Message::ReloadFailed(text) => write!(f, ": reload failed: {}", text),
+                    Message::AccessDenied(text) => write!(f, ": access denied: {}", text),
+                    Message::RuntimeError(code, text) => {
+                        write!(f, ": evaluation runtime error: {} {}", code, text)
+                    }
                     _ => Ok(()),
                 }
             }
             Error::OperationInProgress => write!(f, "another request is already in progress"),
-            Error::InvalidToken(_) => write!(f, "received invalid token"),
-            Error::ParseError(_) => write!(f, "failed to parse server response"),
+            Error::InvalidToken(text) => write!(f, "received invalid token: {}", text),
+            Error::ParseError(messages) => {
+                write!(f, "failed to parse server response {:?}", messages)
+            }
         }
     }
 }
