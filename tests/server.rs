@@ -170,3 +170,40 @@ fn split_content(content: &str) -> Vec<String> {
 
 /// The welcome string we sent to each client on connection
 const GREETING: &str = "0001 BIRD 2.0.7 ready.\n";
+
+macro_rules! test_sync_async_request {
+    ($id:ident($mock:expr, $cmd:ident($( $params:expr ),*), $response:ident, $delay:literal) $test:block) => {
+        #[tokio::test(flavor = "multi_thread")]
+        async fn $id() {
+            let _ = env_logger::try_init();
+            let server = MockServer::start_server($mock, $delay)
+                .await
+                .expect("failed to start server");
+            log::debug!("mock response is {} bytes long", $mock.len());
+            let client = Client::for_unix_socket(&server.unix_socket);
+            let mut async_conn = client.connect().await.expect("failed to connect client");
+            let $response = async_conn.$cmd($($params),*).await.expect("failed to send request");
+            $test;
+
+            let mut sync_conn = client.connect_sync().expect("failed to connect sync client");
+            let $response = sync_conn.$cmd($($params),*).expect("failed to send sync request");
+            $test;
+
+            server.wait_until(1, 3).await;
+        }
+    };
+
+    ($id:ident($mock:expr, $cmd:ident($( $params:expr ),*), $response:ident) $test:block) => {
+        test_sync_async_request!($id($mock, $cmd($($params),*), $response, 0) $test);
+    };
+
+    ($id:ident($mock:expr, $request:literal, $response:ident, $delay:literal) $test:block) => {
+        test_sync_async_request!($id($mock, send_request($request), $response, $delay) $test);
+    };
+
+    ($id:ident($mock:expr, $request:literal, $response:ident) $test:block) => {
+        test_sync_async_request!($id($mock, $request, $response, 0) $test);
+    }
+}
+
+pub(crate) use test_sync_async_request;

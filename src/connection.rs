@@ -864,7 +864,7 @@ fn parse_message(code: u32, buffer: &[u8], start_pos: usize, msg_size: usize) ->
 }
 
 /// Reads are done in sizes of this
-const READ_FRAME_SIZE: usize = 2048;
+pub const READ_FRAME_SIZE: usize = 2048;
 
 /// Unit tests
 #[cfg(test)]
