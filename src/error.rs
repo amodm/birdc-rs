@@ -14,8 +14,8 @@ pub enum Error {
     /// response of the previous one has been fully read.
     OperationInProgress,
     /// If we received a token which was not what we were
-    /// supposed to get
-    InvalidToken(String),
+    /// supposed to get [String]
+    InvalidToken(InvalidTokenError),
     /// We were unable to semantically parse the message,
     /// and the contained value represents the list of
     /// messages we'd received
@@ -50,7 +50,7 @@ impl fmt::Display for Error {
                 }
             }
             Error::OperationInProgress => write!(f, "another request is already in progress"),
-            Error::InvalidToken(text) => write!(f, "received invalid token: {}", text),
+            Error::InvalidToken(error) => write!(f, "received invalid token: {}", error),
             Error::ParseError(messages) => {
                 write!(f, "failed to parse server response {:?}", messages)
             }
@@ -86,13 +86,30 @@ impl From<Message> for Error {
 }
 
 impl From<Utf8Error> for Error {
-    fn from(_: Utf8Error) -> Self {
-        Error::InvalidToken("failed to parse as utf8".into())
+    fn from(cause: Utf8Error) -> Self {
+        Error::InvalidToken(InvalidTokenError::NotUtf8(cause))
     }
 }
 
 impl From<ParseIntError> for Error {
-    fn from(_: ParseIntError) -> Self {
-        Error::InvalidToken("failed to parse as integer".into())
+    fn from(cause: ParseIntError) -> Self {
+        Error::InvalidToken(InvalidTokenError::NotAnInt(cause))
+    }
+}
+
+#[derive(Debug)]
+pub enum InvalidTokenError {
+    NotUtf8(Utf8Error),
+    NotAnInt(ParseIntError),
+    Other(String),
+}
+
+impl fmt::Display for InvalidTokenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotUtf8(err) => err.fmt(f),
+            Self::NotAnInt(err) => err.fmt(f),
+            Self::Other(text) => text.fmt(f),
+        }
     }
 }

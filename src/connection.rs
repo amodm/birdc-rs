@@ -9,8 +9,9 @@ use std::{
 };
 
 use crate::{
-    Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, Message, Protocol,
-    ProtocolDetail, Result, ShowInterfacesMessage, ShowProtocolDetailsMessage, ShowStatusMessage,
+    Error, Interface, InterfaceAddress, InterfaceProperties, InterfaceSummary, InvalidTokenError,
+    Message, Protocol, ProtocolDetail, Result, ShowInterfacesMessage, ShowProtocolDetailsMessage,
+    ShowStatusMessage,
 };
 
 /// An active connection, on which requests can be executed, and responses
@@ -51,7 +52,9 @@ impl Connection {
                 return Ok(connection);
             }
         }
-        Err(Error::InvalidToken("did not find greeting".into()))
+        Err(Error::InvalidToken(InvalidTokenError::Other(
+            "did not find greeting".into(),
+        )))
     }
 
     /// Mark current request/response session as completed, so that new requests can
@@ -273,7 +276,9 @@ impl SyncConnection {
                 return Ok(connection);
             }
         }
-        Err(Error::InvalidToken("did not find greeting".into()))
+        Err(Error::InvalidToken(InvalidTokenError::Other(
+            "did not find greeting".into(),
+        )))
     }
 
     /// Mark current request/response session as completed, so that new requests can
@@ -711,9 +716,9 @@ fn enqueue_messages_from_buffer(
                 b' ' => true,
                 b'-' => false,
                 _ => {
-                    return Err(Error::InvalidToken(format!(
+                    return Err(Error::InvalidToken(InvalidTokenError::Other(format!(
                         "unknown separator {separator} after code {new_code}"
-                    )));
+                    ))));
                 }
             };
             pos += 5; // we're now at the start of data in this line
