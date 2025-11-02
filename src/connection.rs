@@ -668,32 +668,17 @@ fn enqueue_messages_from_buffer(
         log::trace!("conn: checking if we can start processing a new line");
         // break or ask for more data if we're at the end, but expected to parse
         if pos >= bsize {
-            if num_messages > 0 {
-                log::trace!(
-                    "  need more data, exiting loop as already enqueued {num_messages} messages"
-                );
-                break;
-            } else {
-                log::trace!("  need more data");
-                return Ok(0); // we need more data
-            }
+            log::trace!("  need more data: position is larger than buffer size");
+            break;
         }
 
         // if we don't have visibility into the next newline, break or ask
         // for more data
-        let nl_pos: usize;
-        match buffer[pos..].iter().position(|it| *it == b'\n') {
-            Some(it) => nl_pos = pos + it,
+        let nl_pos: usize = match buffer[pos..].iter().position(|it| *it == b'\n') {
+            Some(it) => pos + it,
             None => {
-                if num_messages > 0 {
-                    log::trace!(
-                        "  need more data, exiting loop as already enqueued {num_messages} messages"
-                    );
-                    break;
-                } else {
-                    log::trace!("  need more data");
-                    return Ok(0); // we need more data
-                }
+                log::trace!("  need more data: buffer is not terminated by newline");
+                break;
             }
         };
         let next_line_pos = nl_pos + 1;
@@ -712,15 +697,8 @@ fn enqueue_messages_from_buffer(
             // the line does not start with a space, so we MUST see a code
             // and a continuation/final marker
             if pos + 5 >= bsize {
-                if num_messages > 0 {
-                    log::trace!(
-                        "  need more data, exiting loop as already enqueued {num_messages} messages"
-                    );
-                    break;
-                } else {
-                    log::trace!("  need more data");
-                    return Ok(0);
-                }
+                log::trace!("  need more data: trying to parse bird code but buffer does not contain all of it");
+                break;
             }
             let new_code = parse_code(&buffer[pos..(pos + 4)])?;
             let separator = buffer[pos + 4];
@@ -820,6 +798,7 @@ fn enqueue_messages_from_buffer(
         unparsed_bytes.extend_from_slice(src);
     }
 
+    log::trace!("  already enqueued {num_messages} messages");
     Ok(num_messages)
 }
 
