@@ -5,9 +5,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.4.2] - 2025-11-26 <a name="0.4.2"></a>
+### Fixed
+- Handle single large messages correctly. Credit @digtail
+
 ## [0.4.1] - 2025-10-18 <a name="0.4.1"></a>
 ### Fixed
-- Fix bug in handling whitespace in show protocol output
+- Fix bug in handling whitespace in show protocol output. Credit @digtail
 
 ## [0.4.0] - 2025-08-08 <a name="0.4.0"></a>
 ### Added
@@ -26,7 +30,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Initial release.
 
-[Unreleased]: https://github.com/amodm/birdc-rs/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/amodm/birdc-rs/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/amodm/birdc-rs/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/amodm/birdc-rs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/amodm/birdc-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/amodm/birdc-rs/compare/v0.2.0...v0.3.0
