@@ -145,6 +145,7 @@ impl MockServer {
 
 /// Helper method that takes in `s` as a multiline string, and trims off the indent
 /// that might have come due to the text editor.
+#[allow(dead_code)]
 pub fn heredoc(s: &str) -> String {
     let indent = if let Some(line2) = s.split('\n').nth(1) {
         line2.find(char::is_alphanumeric).unwrap_or(0)
@@ -171,6 +172,7 @@ fn split_content(content: &str) -> Vec<String> {
 /// The welcome string we sent to each client on connection
 const GREETING: &str = "0001 BIRD 2.0.7 ready.\n";
 
+#[macro_export]
 macro_rules! test_sync_async_request {
     ($id:ident($mock:expr, $cmd:ident($( $params:expr ),*), $response:ident, $delay:literal) $test:block) => {
         #[tokio::test(flavor = "multi_thread")]
@@ -205,5 +207,3 @@ macro_rules! test_sync_async_request {
         test_sync_async_request!($id($mock, $request, $response, 0) $test);
     }
 }
-
-pub(crate) use test_sync_async_request;

@@ -15,7 +15,7 @@ test_sync_async_request!(
     }
 );
 
-static GET_BABEL_ENTRIES: &'static str = "1025-meadow:
+static GET_BABEL_ENTRIES: &str = "1025-meadow:
  meadow:
  Prefix                   Router ID               Metric Seqno  Routes Sources
  2001:db8:42:6::46/128 03:b9:65:01:00:00:00:46    111   126       6       1
